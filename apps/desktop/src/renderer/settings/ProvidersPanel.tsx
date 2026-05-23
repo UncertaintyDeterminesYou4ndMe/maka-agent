@@ -306,24 +306,64 @@ function ProviderCatalogCard(props: { type: ProviderType; count: number; onSelec
   const defaults = PROVIDER_DEFAULTS[props.type];
   const display = providerDisplay(props.type);
   const disabled = defaults.status !== 'ready';
+  // PR-UI-LAYOUT-41 follow-up (@kenji msg 618ee9a7 gate 3):
+  // Roadmap title MUST avoid operational verbs (登录 / 连接 / 授权
+  // / 测试 / 接入). The previous title said "...同一家厂商的
+  // API key 在下方分类中接入" — "接入" reads as operational call
+  // even though it's about the alternative API key path.
+  // Rephrased to a stative observation: "API key 形式仍可用".
   const title = disabled
-    ? '即将推出 OAuth 订阅登录。当前可使用同一家厂商的 API key 在下方分类中接入。'
+    ? '路线图项：尚未实现。同一家厂商的 API key 形式仍可用。'
     : `添加 ${display.name}`;
+
+  // PR-UI-LAYOUT-41 (@kenji review #my-ai:2f91befb gate):
+  // disabled future actions MUST NOT be focusable / clickable. The
+  // previous render was a real `<button>` with `onClick={disabled ?
+  // undefined : ...}` — that left it tabbable and screen-reader
+  // interactive even though click did nothing. For the
+  // not-yet-implemented OAuth subscription providers, render a
+  // non-interactive `<div>` so keyboard tab skips it and AT reads
+  // it as informational, not actionable.
+  //
+  // PR-UI-LAYOUT-41 follow-up (@kenji #my-ai:2f91befb msg 618ee9a7):
+  // dropped `role="status"` — it has implicit `aria-live="polite"`
+  // and would cause unnecessary AT live announcement on a static
+  // catalog tile. Plain `<div>` + `aria-label` is the right shape:
+  // AT reads the name once on focus traversal, no live region.
+  if (disabled) {
+    return (
+      <div
+        className="providerCatalogCard"
+        data-provider={props.type}
+        data-status="coming-soon"
+        aria-label={`${display.name}（路线图，尚未实现）`}
+        title={title}
+      >
+        <ProviderLogo type={props.type} />
+        <span className="providerCatalogCopy">
+          <span className="providerCatalogTitle">
+            <strong>{display.name}</strong>
+          </span>
+          <small>{display.description}</small>
+        </span>
+      </div>
+    );
+  }
 
   return (
     <button
       className="providerCatalogCard"
       data-provider={props.type}
-      data-status={disabled ? 'coming-soon' : 'ready'}
+      data-status="ready"
       type="button"
       title={title}
-      onClick={disabled ? undefined : props.onSelect}
+      onClick={props.onSelect}
     >
       <ProviderLogo type={props.type} />
       <span className="providerCatalogCopy">
         <span className="providerCatalogTitle">
           <strong>{display.name}</strong>
-          {!disabled && display.badge && <em>{display.badge}</em>}
+          {display.badge && <em>{display.badge}</em>}
         </span>
         <small>{display.description}</small>
         {props.count > 0 && <span className="providerCatalogCount">已配置 {props.count} 个</span>}
@@ -916,12 +956,27 @@ export function providerDisplay(type: ProviderType): { name: string; description
       return { name: 'Ollama', description: '连接本机 localhost 的 Ollama 模型。', badge: 'Local' };
     case 'openai-compatible':
       return { name: 'OpenAI Compatible', description: '中转站、代理服务或自部署网关。', badge: 'Custom' };
+    // PR-UI-LAYOUT-41: subscription providers drop the "Soon" badge.
+    // When disabled (current state), the catalog card renders the
+    // "Roadmap" pseudo-badge via [data-status="coming-soon"]::after,
+    // and the description copy itself carries the "路线图" / "尚未
+    // 实现" framing. Once PR-AUTH-1 lands and these go enabled,
+    // they'll get an "OAuth" or "Account" badge then — until then,
+    // no badge prevents the unused field from rendering in some
+    // future code path.
+    //
+    // PR-UI-LAYOUT-41 follow-up (@kenji msg 618ee9a7 gate 3):
+    // description uses noun phrase only, no operational verbs.
+    // Earlier draft had "账号登录" which reads as call-to-action
+    // ("log in with account"); switched to "订阅账号路径" (noun
+    // phrase describing the future capability) so the user
+    // can't read it as "click here to log in".
     case 'claude-subscription':
-      return { name: 'Claude Subscription', description: 'Claude Pro / Max 订阅登录，后续支持。', badge: 'Soon' };
+      return { name: 'Claude Subscription', description: 'Claude Pro / Max 订阅账号路径（路线图，尚未实现）。' };
     case 'codex-subscription':
-      return { name: 'Codex Subscription', description: 'ChatGPT / Codex 订阅登录，后续支持。', badge: 'Soon' };
+      return { name: 'Codex Subscription', description: 'ChatGPT / Codex 订阅账号路径（路线图，尚未实现）。' };
     case 'gemini-cli':
-      return { name: 'Gemini CLI', description: 'Google 账号 OAuth 登录，后续支持。', badge: 'Soon' };
+      return { name: 'Gemini CLI', description: 'Google 账号 OAuth 路径（路线图，尚未实现）。' };
   }
 }
 
