@@ -3,6 +3,7 @@ import {
   buildSubagentProjectionTools,
   buildSubagentSpawnTool,
 } from '@maka/runtime';
+import { posix as pathPosix } from 'node:path';
 import { z } from 'zod';
 import type { IsolatedToolExecutor } from './isolation.js';
 
@@ -75,10 +76,10 @@ export function buildIsolatedReadTool(executor: IsolatedToolExecutor): MakaTool 
     }),
     permissionRequired: false,
     impl: async ({ path, offset, limit }, { cwd }) => {
-      assertRelativePath(path, 'Read path');
-      if (executor.readFile) return await executor.readFile({ cwd, path, offset, limit });
+      const normalizedPath = normalizeWorkspacePath(path, cwd, 'Read path');
+      if (executor.readFile) return await executor.readFile({ cwd, path: normalizedPath, offset, limit });
       const stdout = await execFileCommand(executor, cwd, nodeFileCommand(READ_SCRIPT, [
-        path,
+        normalizedPath,
         numberArg(offset),
         numberArg(limit),
       ]));
@@ -94,13 +95,13 @@ export function buildIsolatedWriteTool(executor: IsolatedToolExecutor): MakaTool
     parameters: z.object({ path: z.string(), content: z.string() }),
     permissionRequired: true,
     impl: async ({ path, content }, { cwd }) => {
-      assertRelativePath(path, 'Write path');
-      if (executor.writeFile) return await executor.writeFile({ cwd, path, content });
+      const normalizedPath = normalizeWorkspacePath(path, cwd, 'Write path');
+      if (executor.writeFile) return await executor.writeFile({ cwd, path: normalizedPath, content });
       await execFileCommand(executor, cwd, nodeFileCommand(WRITE_SCRIPT, [
-        path,
+        normalizedPath,
         Buffer.from(content, 'utf8').toString('base64'),
       ]));
-      return { ok: true, path, bytes: Buffer.byteLength(content, 'utf8') };
+      return { ok: true, path: normalizedPath, bytes: Buffer.byteLength(content, 'utf8') };
     },
   };
 }
@@ -116,16 +117,16 @@ export function buildIsolatedEditTool(executor: IsolatedToolExecutor): MakaTool 
     }),
     permissionRequired: true,
     impl: async ({ path, old_string, new_string }, { cwd }) => {
-      assertRelativePath(path, 'Edit path');
+      const normalizedPath = normalizeWorkspacePath(path, cwd, 'Edit path');
       if (executor.editFile) {
-        return await executor.editFile({ cwd, path, oldString: old_string, newString: new_string });
+        return await executor.editFile({ cwd, path: normalizedPath, oldString: old_string, newString: new_string });
       }
       await execFileCommand(executor, cwd, nodeFileCommand(EDIT_SCRIPT, [
-        path,
+        normalizedPath,
         Buffer.from(old_string, 'utf8').toString('base64'),
         Buffer.from(new_string, 'utf8').toString('base64'),
       ]));
-      return { ok: true, path, replacements: 1 };
+      return { ok: true, path: normalizedPath, replacements: 1 };
     },
   };
 }
@@ -140,10 +141,13 @@ export function buildIsolatedGlobTool(executor: IsolatedToolExecutor): MakaTool 
     }),
     permissionRequired: false,
     impl: async ({ pattern, cwd: relCwd }, { cwd }) => {
-      assertRelativeGlobPattern(pattern, 'Glob pattern');
-      if (relCwd !== undefined) assertRelativePath(relCwd, 'Glob cwd');
-      if (executor.globFiles) return await executor.globFiles({ cwd, pattern, searchCwd: relCwd });
-      const stdout = await execFileCommand(executor, cwd, nodeFileCommand(GLOB_SCRIPT, [pattern, relCwd ?? '']));
+      const normalizedPattern = normalizeWorkspaceGlobPattern(pattern, cwd, 'Glob pattern');
+      const normalizedRelCwd = relCwd === undefined ? undefined : normalizeWorkspacePath(relCwd, cwd, 'Glob cwd');
+      if (executor.globFiles) return await executor.globFiles({ cwd, pattern: normalizedPattern, searchCwd: normalizedRelCwd });
+      const stdout = await execFileCommand(executor, cwd, nodeFileCommand(GLOB_SCRIPT, [
+        normalizedPattern,
+        normalizedRelCwd ?? '',
+      ]));
       return { files: parseStringArray(stdout, 'Glob') };
     },
   };
@@ -160,13 +164,18 @@ export function buildIsolatedGrepTool(executor: IsolatedToolExecutor): MakaTool 
     }),
     permissionRequired: false,
     impl: async ({ pattern, path, glob }, { cwd }) => {
-      if (path !== undefined) assertRelativePath(path, 'Grep path');
-      if (glob !== undefined) assertRelativeGlobPattern(glob, 'Grep glob');
-      if (executor.grepFiles) return await executor.grepFiles({ cwd, pattern, path, glob });
+      const normalizedPath = path === undefined ? undefined : normalizeWorkspacePath(path, cwd, 'Grep path');
+      const normalizedGlob = glob === undefined ? undefined : normalizeWorkspaceGlobPattern(glob, cwd, 'Grep glob');
+      if (executor.grepFiles) return await executor.grepFiles({
+        cwd,
+        pattern,
+        path: normalizedPath,
+        glob: normalizedGlob,
+      });
       const stdout = await execFileCommand(executor, cwd, nodeFileCommand(GREP_SCRIPT, [
         pattern,
-        path ?? '',
-        glob ?? '',
+        normalizedPath ?? '',
+        normalizedGlob ?? '',
       ]));
       return { matches: parseStringArray(stdout, 'Grep') };
     },
@@ -201,7 +210,38 @@ function parseStringArray(stdout: string, label: string): string[] {
   return parsed;
 }
 
-function assertRelativePath(inputPath: string, label: string): void {
+function normalizeWorkspacePath(inputPath: string, cwd: string, label: string): string {
+  assertNoDriveOrParentSegment(inputPath, label);
+  if (inputPath.startsWith('/')) {
+    return assertNormalizedRelativePath(
+      pathPosix.relative(normalizeWorkspaceRoot(cwd), pathPosix.normalize(inputPath)) || '.',
+      label,
+    );
+  }
+  return assertNormalizedRelativePath(inputPath, label);
+}
+
+function normalizeWorkspaceGlobPattern(pattern: string, cwd: string, label: string): string {
+  assertNoDriveOrParentSegment(pattern, label);
+  if (!pattern.startsWith('/')) return assertNormalizedRelativePath(pattern, label);
+  return assertNormalizedRelativePath(pathPosix.relative(normalizeWorkspaceRoot(cwd), pattern) || '.', label);
+}
+
+function normalizeWorkspaceRoot(cwd: string): string {
+  return pathPosix.normalize(cwd);
+}
+
+function assertNoDriveOrParentSegment(inputPath: string, label: string): void {
+  if (
+    inputPath.length === 0
+    || /^[A-Za-z]:[\\/]/.test(inputPath)
+    || inputPath.split(/[\\/]+/).includes('..')
+  ) {
+    throw new Error(`${label} must stay inside the isolated workspace`);
+  }
+}
+
+function assertNormalizedRelativePath(inputPath: string, label: string): string {
   if (
     inputPath.length === 0
     || inputPath.startsWith('/')
@@ -210,17 +250,7 @@ function assertRelativePath(inputPath: string, label: string): void {
   ) {
     throw new Error(`${label} must stay inside the isolated workspace`);
   }
-}
-
-function assertRelativeGlobPattern(pattern: string, label: string): void {
-  if (
-    pattern.length === 0
-    || pattern.startsWith('/')
-    || /^[A-Za-z]:[\\/]/.test(pattern)
-    || pattern.split(/[\\/]+/).includes('..')
-  ) {
-    throw new Error(`${label} must stay inside the isolated workspace`);
-  }
+  return inputPath;
 }
 
 const COMMON_NODE_HELPERS = String.raw`

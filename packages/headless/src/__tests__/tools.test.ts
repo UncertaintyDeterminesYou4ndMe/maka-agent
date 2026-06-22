@@ -100,22 +100,30 @@ describe('isolated headless tools', () => {
       },
     });
 
-    assert.deepEqual(await tool(tools, 'Read').impl({ path: 'target.txt', offset: 1, limit: 2 }, toolCtx(cwd)), {
+    assert.deepEqual(await tool(tools, 'Read').impl({ path: join(cwd, 'target.txt'), offset: 1, limit: 2 }, toolCtx(cwd)), {
       content: 'container\n',
     });
-    assert.deepEqual(await tool(tools, 'Write').impl({ path: 'target.txt', content: 'external\n' }, toolCtx(cwd)), {
+    assert.deepEqual(await tool(tools, 'Write').impl({ path: join(cwd, 'target.txt'), content: 'external\n' }, toolCtx(cwd)), {
       ok: true,
       path: 'target.txt',
       bytes: 9,
     });
     assert.deepEqual(
-      await tool(tools, 'Edit').impl({ path: 'target.txt', old_string: 'host', new_string: 'external' }, toolCtx(cwd)),
+      await tool(tools, 'Edit').impl({
+        path: join(cwd, 'target.txt'),
+        old_string: 'host',
+        new_string: 'external',
+      }, toolCtx(cwd)),
       { ok: true, path: 'target.txt', replacements: 1 },
     );
-    assert.deepEqual(await tool(tools, 'Glob').impl({ pattern: '*.txt', cwd: 'src' }, toolCtx(cwd)), {
+    assert.deepEqual(await tool(tools, 'Glob').impl({ pattern: `${cwd}/*.txt`, cwd: join(cwd, 'src') }, toolCtx(cwd)), {
       files: ['container.txt'],
     });
-    assert.deepEqual(await tool(tools, 'Grep').impl({ pattern: 'needle', path: 'src', glob: '*.txt' }, toolCtx(cwd)), {
+    assert.deepEqual(await tool(tools, 'Grep').impl({
+      pattern: 'needle',
+      path: join(cwd, 'src'),
+      glob: `${cwd}/*.txt`,
+    }, toolCtx(cwd)), {
       matches: ['container.txt:1:needle'],
     });
 
@@ -132,6 +140,9 @@ describe('isolated headless tools', () => {
   test('file tools fall back to command-backed isolated operations', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'maka-headless-tools-fallback-'));
     await mkdir(join(cwd, 'src'));
+    const absoluteFile = join(cwd, 'src', 'file.txt');
+    const absoluteSrc = join(cwd, 'src');
+    const absoluteGlob = `${cwd}/**/*.txt`;
     const calls: string[] = [];
     const tools = buildIsolatedHeadlessTools({
       async exec(input) {
@@ -149,22 +160,22 @@ describe('isolated headless tools', () => {
       },
     });
 
-    assert.deepEqual(await tool(tools, 'Write').impl({ path: 'src/file.txt', content: 'hello\nneedle\n' }, toolCtx(cwd)), {
+    assert.deepEqual(await tool(tools, 'Write').impl({ path: absoluteFile, content: 'hello\nneedle\n' }, toolCtx(cwd)), {
       ok: true,
       path: 'src/file.txt',
       bytes: 13,
     });
-    assert.deepEqual(await tool(tools, 'Read').impl({ path: 'src/file.txt', offset: 1, limit: 1 }, toolCtx(cwd)), {
+    assert.deepEqual(await tool(tools, 'Read').impl({ path: absoluteFile, offset: 1, limit: 1 }, toolCtx(cwd)), {
       content: 'needle',
     });
     assert.deepEqual(
-      await tool(tools, 'Edit').impl({ path: 'src/file.txt', old_string: 'hello', new_string: 'hi' }, toolCtx(cwd)),
+      await tool(tools, 'Edit').impl({ path: absoluteFile, old_string: 'hello', new_string: 'hi' }, toolCtx(cwd)),
       { ok: true, path: 'src/file.txt', replacements: 1 },
     );
-    assert.deepEqual(await tool(tools, 'Glob').impl({ pattern: '**/*.txt' }, toolCtx(cwd)), {
+    assert.deepEqual(await tool(tools, 'Glob').impl({ pattern: absoluteGlob }, toolCtx(cwd)), {
       files: ['src/file.txt'],
     });
-    assert.deepEqual(await tool(tools, 'Grep').impl({ pattern: 'needle', glob: '**/*.txt' }, toolCtx(cwd)), {
+    assert.deepEqual(await tool(tools, 'Grep').impl({ pattern: 'needle', path: absoluteSrc, glob: absoluteGlob }, toolCtx(cwd)), {
       matches: ['src/file.txt:2:needle'],
     });
     assert.equal(await readFile(join(cwd, 'src/file.txt'), 'utf8'), 'hi\nneedle\n');
