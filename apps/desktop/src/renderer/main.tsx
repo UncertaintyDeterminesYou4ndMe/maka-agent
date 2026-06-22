@@ -617,46 +617,32 @@ function AppShell() {
       pendingSessionRowActionsRef.current.delete(key);
     }
   }
-  function addPendingMessageRetry(sessionId: string): boolean {
-    if (messageRetryPendingRef.current.has(sessionId)) return false;
-    messageRetryPendingRef.current.add(sessionId);
-    setMessageRetryPendingBySession((current) => ({ ...current, [sessionId]: true }));
-    return true;
-  }
-  function clearPendingMessageRetry(sessionId: string): void {
-    if (!messageRetryPendingRef.current.has(sessionId)) return;
-    messageRetryPendingRef.current.delete(sessionId);
-    setMessageRetryPendingBySession((current) => {
-      if (!current[sessionId]) return current;
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
-  }
-
-  function addPendingStop(sessionId: string): boolean {
-    if (stopPendingRef.current.has(sessionId)) return false;
-    stopPendingRef.current.add(sessionId);
-    setStopPendingBySession((current) => ({ ...current, [sessionId]: true }));
-    return true;
-  }
-
-  function clearPendingStop(sessionId: string): void {
-    if (!stopPendingRef.current.has(sessionId)) return;
-    stopPendingRef.current.delete(sessionId);
-    setStopPendingBySession((current) => {
-      if (!current[sessionId]) return current;
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
-  }
-
   function omitSessionKey<T>(current: Record<string, T>, sessionId: string): Record<string, T> {
     if (!(sessionId in current)) return current;
     const next = { ...current };
     delete next[sessionId];
     return next;
+  }
+
+  function addPendingSessionAction(
+    sessionId: string,
+    pendingRef: { current: Set<string> },
+    setPendingBySession: (updater: (current: Record<string, boolean>) => Record<string, boolean>) => void,
+  ): boolean {
+    if (pendingRef.current.has(sessionId)) return false;
+    pendingRef.current.add(sessionId);
+    setPendingBySession((current) => ({ ...current, [sessionId]: true }));
+    return true;
+  }
+
+  function clearPendingSessionAction(
+    sessionId: string,
+    pendingRef: { current: Set<string> },
+    setPendingBySession: (updater: (current: Record<string, boolean>) => Record<string, boolean>) => void,
+  ): void {
+    if (!pendingRef.current.has(sessionId)) return;
+    pendingRef.current.delete(sessionId);
+    setPendingBySession((current) => omitSessionKey(current, sessionId));
   }
 
   function clearSessionRendererState(sessionId: string): void {
@@ -1123,7 +1109,7 @@ function AppShell() {
       })
       .catch((error) => {
         if (!disposed && activeIdRef.current === activeId) {
-          const message = messageLoadActionErrorMessage(error, '对话内容暂时无法读取，请稍后重试。');
+          const message = generalizedErrorMessageChinese(error, '对话内容暂时无法读取，请稍后重试。');
           setMessageLoadErrorBySession((current) => ({ ...current, [activeId]: message }));
           toastApi.error('读取对话失败', message);
         }
@@ -1779,7 +1765,7 @@ function AppShell() {
       setSkills(next);
     } catch (error) {
       if (options.shouldShowError?.() ?? true) {
-        toastApi.error('刷新技能失败', skillsActionErrorMessage(error, '刷新技能失败，请稍后重试。'));
+        toastApi.error('刷新技能失败', generalizedErrorMessageChinese(error, '刷新技能失败，请稍后重试。'));
       }
     }
   }
@@ -1809,7 +1795,7 @@ function AppShell() {
       }
     } catch (error) {
       if (isSkillsSurfaceActive()) {
-        toastApi.error('无法创建示例技能', skillsActionErrorMessage(error, '无法创建示例技能，请稍后重试。'));
+        toastApi.error('无法创建示例技能', generalizedErrorMessageChinese(error, '无法创建示例技能，请稍后重试。'));
       }
     }
   }
@@ -1833,7 +1819,7 @@ function AppShell() {
       }
     } catch (error) {
       if (isSkillsSurfaceActive()) {
-        toastApi.error('无法打开 Skill', skillsActionErrorMessage(error, '无法打开 Skill，请稍后重试。'));
+        toastApi.error('无法打开 Skill', generalizedErrorMessageChinese(error, '无法打开 Skill，请稍后重试。'));
       }
     }
   }
@@ -2026,7 +2012,7 @@ function AppShell() {
 
   async function stop() {
     const sessionId = activeIdRef.current;
-    if (!sessionId || !addPendingStop(sessionId)) return;
+    if (!sessionId || !addPendingSessionAction(sessionId, stopPendingRef, setStopPendingBySession)) return;
     try {
       await window.maka.sessions.stop(sessionId, { source: 'stop_button' });
     } catch (error) {
@@ -2038,7 +2024,7 @@ function AppShell() {
       // actually interrupted and can retry.
       if (activeIdRef.current === sessionId) toastApi.error('停止失败', sessionControlActionErrorMessage(error));
     } finally {
-      clearPendingStop(sessionId);
+      clearPendingSessionAction(sessionId, stopPendingRef, setStopPendingBySession);
     }
   }
 
@@ -2069,18 +2055,18 @@ function AppShell() {
       }
     } catch (error) {
       if (activeIdRef.current === sessionId) {
-        const message = messageLoadActionErrorMessage(error, '对话内容暂时无法刷新，请稍后重试。');
+        const message = generalizedErrorMessageChinese(error, '对话内容暂时无法刷新，请稍后重试。');
         setMessageLoadErrorBySession((current) => ({ ...current, [sessionId]: message }));
         toastApi.error('刷新对话失败', message);
       }
     }
   }
   async function retryMessages(sessionId: string) {
-    if (!addPendingMessageRetry(sessionId)) return;
+    if (!addPendingSessionAction(sessionId, messageRetryPendingRef, setMessageRetryPendingBySession)) return;
     try {
       await refreshMessages(sessionId);
     } finally {
-      clearPendingMessageRetry(sessionId);
+      clearPendingSessionAction(sessionId, messageRetryPendingRef, setMessageRetryPendingBySession);
     }
   }
 
@@ -2466,7 +2452,7 @@ function AppShell() {
       await window.maka.onboarding.setMilestone(FIRST_RUN_TASK_SUGGESTION_MILESTONES[id], 'skipped');
       onboarding.refresh();
     } catch (error) {
-      toastApi.error('隐藏建议失败', firstRunSuggestionActionErrorMessage(error, '任务建议暂时无法隐藏，请稍后重试。'));
+      toastApi.error('隐藏建议失败', generalizedErrorMessageChinese(error, '任务建议暂时无法隐藏，请稍后重试。'));
     }
   }
 
@@ -2477,7 +2463,7 @@ function AppShell() {
       }
       onboarding.refresh();
     } catch (error) {
-      toastApi.error('恢复建议失败', firstRunSuggestionActionErrorMessage(error, '任务建议暂时无法恢复，请稍后重试。'));
+      toastApi.error('恢复建议失败', generalizedErrorMessageChinese(error, '任务建议暂时无法恢复，请稍后重试。'));
     }
   }
 
@@ -3612,10 +3598,6 @@ function sessionControlActionErrorMessage(error: unknown): string {
   return generalizedErrorMessageChinese(error, '会话操作失败，请稍后重试。');
 }
 
-function messageLoadActionErrorMessage(error: unknown, fallback: string): string {
-  return generalizedErrorMessageChinese(error, fallback);
-}
-
 function sendActionErrorMessage(error: unknown): string {
   return generalizedErrorMessageChinese(error, '消息暂时无法发送，请稍后重试。');
 }
@@ -3626,14 +3608,6 @@ function composerImportActionErrorMessage(error: unknown): string {
 
 function quickChatActionErrorMessage(error: unknown): string {
   return generalizedErrorMessageChinese(error, '对话暂时无法开始，请稍后重试。');
-}
-
-function firstRunSuggestionActionErrorMessage(error: unknown, fallback: string): string {
-  return generalizedErrorMessageChinese(error, fallback);
-}
-
-function skillsActionErrorMessage(error: unknown, fallback: string): string {
-  return generalizedErrorMessageChinese(error, fallback);
 }
 
 function cleanErrorMessage(error: unknown): string {
