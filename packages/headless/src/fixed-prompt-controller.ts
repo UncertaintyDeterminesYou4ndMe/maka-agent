@@ -12,11 +12,15 @@ export interface FixedPromptTask {
   path: string;
 }
 
+export type HarborTaskRunCellOutput = HarborCellOutput & {
+  traceEventsPath?: string;
+};
+
 export interface HarborTaskRunOutput {
   harbor: {
     reward: number;
   };
-  cell: HarborCellOutput;
+  cell: HarborTaskRunCellOutput;
 }
 
 export interface HarborTaskRunInput {
@@ -52,6 +56,7 @@ export interface FixedPromptTaskCompletedEvent {
   steps: number;
   durationMs: number;
   runtimeEventsPath: string;
+  traceEventsPath?: string;
   harbor: {
     reward: number;
   };
@@ -93,6 +98,7 @@ export interface FixedPromptTaskPlumbingFailedEvent {
   steps: number;
   durationMs: number;
   runtimeEventsPath: string;
+  traceEventsPath?: string;
   harbor: {
     reward: number;
   };
@@ -436,6 +442,7 @@ function taskCompletedEvent(input: {
     steps: output.cell.steps,
     durationMs: output.cell.durationMs,
     runtimeEventsPath: output.cell.runtimeEventsPath,
+    ...(output.cell.traceEventsPath ? { traceEventsPath: output.cell.traceEventsPath } : {}),
     harbor: {
       reward: output.harbor.reward,
     },
@@ -473,6 +480,7 @@ function taskPlumbingFailedEvent(input: {
     steps: input.output.cell.steps,
     durationMs: input.output.cell.durationMs,
     runtimeEventsPath: input.output.cell.runtimeEventsPath,
+    ...(input.output.cell.traceEventsPath ? { traceEventsPath: input.output.cell.traceEventsPath } : {}),
     harbor: {
       reward: input.output.harbor.reward,
     },

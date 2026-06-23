@@ -795,6 +795,7 @@ function taskCompletedEvent(input: { taskId: string; promptHash?: string }): Fix
     steps: 4,
     durationMs: 50,
     runtimeEventsPath: `/logs/${input.taskId}/runtime-events.jsonl`,
+    traceEventsPath: `/logs/${input.taskId}/events.jsonl`,
     harbor: { reward: 1 },
   };
 }
@@ -830,6 +831,7 @@ function harborOutput(input: {
       schemaVersion: 1,
       status: 'completed',
       runtimeEventsPath: `/logs/${input.taskId}/runtime-events.jsonl`,
+      traceEventsPath: `/logs/${input.taskId}/events.jsonl`,
       ...(input.omitPromptHash ? {} : { promptHash: input.promptHash ?? hashSystemPrompt('fixed prompt\n') }),
       tokenSummary: input.tokenSummary ?? tokenSummary({ input: 1, output: 2, reasoning: 0, total: 3, costUsd: 0.02 }),
       toolSummary: {
