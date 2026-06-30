@@ -42,6 +42,7 @@ import {
 } from './cell-output.js';
 import type { Config, Task } from './contracts.js';
 import { configWithHeavyTaskPolicy, resolveHeavyTaskMode } from './heavy-task-policy.js';
+import { configWithEconomyTaskPolicy, resolveEconomyTaskMode } from './economy-task-policy.js';
 import type { HeadlessBackendContext, IsolatedToolExecutor, RealBackendIsolation } from './isolation.js';
 import { ISOLATED_HEADLESS_TOOL_NAMES, validateRealBackendIsolation } from './isolation.js';
 import { PiCliJsonTransport } from './pi-cli-json-transport.js';
@@ -268,7 +269,9 @@ export async function runHarborCell(input: RunHarborCellInput): Promise<RunHarbo
     workspaceDir: input.cwd,
   };
   const heavyTaskMode = resolveHeavyTaskMode(input.config, task);
-  const config = configWithHeavyTaskPolicy(input.config, heavyTaskMode);
+  const configAfterHeavy = configWithHeavyTaskPolicy(input.config, heavyTaskMode);
+  const economyTaskMode = resolveEconomyTaskMode(configAfterHeavy, task);
+  const config = configWithEconomyTaskPolicy(configAfterHeavy, economyTaskMode);
   const registerBackends = input.registerBackends ?? ((registry: BackendRegistry) => registerFakeBackend(registry));
   await registerBackends(backends, {
     config,
@@ -377,10 +380,12 @@ export async function runHarborCellFromEnv(
   const backend = backendFromEnv(resolvedEnv.MAKA_BACKEND);
   const contextBudgetPolicy = buildHarborCellContextBudgetPolicySnapshot(resolvedEnv);
   const continuationPolicy = buildHarborCellContinuationPolicy(resolvedEnv);
+  const economyTaskMode = economyTaskModeFromEnv(resolvedEnv.MAKA_ECONOMY_TASK_MODE);
   const baseConfig = {
     id: resolvedEnv.MAKA_CONFIG_ID ?? 'harbor-cell',
     backend,
     ...(resolvedEnv.MAKA_SYSTEM_PROMPT !== undefined ? { systemPrompt: resolvedEnv.MAKA_SYSTEM_PROMPT } : {}),
+    ...(economyTaskMode !== undefined ? { economyTaskMode } : {}),
   };
   let config: Config;
   let registerBackends = options.registerBackends;
@@ -465,6 +470,12 @@ export async function runHarborCellFromEnv(
     ...(options.now ? { now: options.now } : {}),
     ...(options.newId ? { newId: options.newId } : {}),
   });
+}
+
+function economyTaskModeFromEnv(value: string | undefined): boolean | undefined {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return undefined;
 }
 
 export function buildHarborCellContinuationPolicy(

@@ -774,6 +774,131 @@ describe('runHarborCell', () => {
     });
   });
 
+  test('appends economy-task policy to Harbor backend context from env', async () => {
+    await withDirs(async ({ workspaceDir, outputDir, storageRoot }) => {
+      const seenPrompts: Array<string | undefined> = [];
+      const registerCapturingBackend = (registry: BackendRegistry, context: HeadlessBackendContext): void => {
+        seenPrompts.push(context.config.systemPrompt);
+        registry.register('fake', (ctx) =>
+          new CellReportingBackend({ sessionId: ctx.sessionId, header: ctx.header, store: ctx.store }),
+        );
+      };
+
+      await runHarborCellFromEnv({
+        MAKA_BACKEND: 'fake',
+        MAKA_INSTRUCTION: 'Write a CSV summary of log files.',
+        MAKA_WORKDIR: workspaceDir,
+        MAKA_OUTPUT_DIR: outputDir,
+        MAKA_STORAGE_ROOT: storageRoot,
+        MAKA_SYSTEM_PROMPT: 'Use the benchmark prompt.',
+        MAKA_ECONOMY_TASK_MODE: 'true',
+      }, {
+        registerBackends: registerCapturingBackend,
+      });
+
+      assert.match(seenPrompts[0] ?? '', /Use the benchmark prompt/);
+      assert.match(seenPrompts[0] ?? '', /Economy-task benchmark policy/);
+      assert.match(seenPrompts[0] ?? '', /one lightweight targeted preview/);
+    });
+  });
+
+  test('explicit MAKA_ECONOMY_TASK_MODE=false disables economy-task policy from env signals', async () => {
+    await withDirs(async ({ workspaceDir, outputDir, storageRoot }) => {
+      const seenPrompts: Array<string | undefined> = [];
+      const registerCapturingBackend = (registry: BackendRegistry, context: HeadlessBackendContext): void => {
+        seenPrompts.push(context.config.systemPrompt);
+        registry.register('fake', (ctx) =>
+          new CellReportingBackend({ sessionId: ctx.sessionId, header: ctx.header, store: ctx.store }),
+        );
+      };
+
+      await runHarborCellFromEnv({
+        MAKA_BACKEND: 'fake',
+        MAKA_INSTRUCTION: 'Write a CSV summary of log files.',
+        MAKA_WORKDIR: workspaceDir,
+        MAKA_OUTPUT_DIR: outputDir,
+        MAKA_STORAGE_ROOT: storageRoot,
+        MAKA_SYSTEM_PROMPT: 'Use the benchmark prompt.',
+        MAKA_ECONOMY_TASK_MODE: 'false',
+      }, {
+        registerBackends: registerCapturingBackend,
+      });
+
+      assert.match(seenPrompts[0] ?? '', /Use the benchmark prompt/);
+      assert.doesNotMatch(seenPrompts[0] ?? '', /Economy-task benchmark policy/);
+    });
+  });
+
+  test('host-side Harbor cell config reads MAKA_ECONOMY_TASK_MODE', async () => {
+    const { main } = await import(new URL('../../harbor/run-host-cell.mjs', import.meta.url).href) as {
+      main: (options?: { registerBackends?: (registry: BackendRegistry, context: HeadlessBackendContext) => void }) => Promise<void>;
+    };
+    await withDirs(async ({ workspaceDir, outputDir, storageRoot }) => {
+      const previousEnv = { ...process.env };
+      const seenPrompts: string[] = [];
+      const registerCapturingBackend = (registry: BackendRegistry, context: HeadlessBackendContext): void => {
+        seenPrompts.push(context.config.systemPrompt ?? '');
+        registry.register('ai-sdk', (ctx) =>
+          new CellReportingBackend({ sessionId: ctx.sessionId, header: ctx.header, store: ctx.store }),
+        );
+      };
+      try {
+        process.env.MAKA_PROVIDER = 'openai';
+        process.env.MAKA_MODEL = 'openai/gpt-4o-mini';
+        process.env.MAKA_HOST_API_KEY = 'test-key';
+        process.env.MAKA_HARBOR_TOOL_EXECUTOR_URL = 'http://127.0.0.1:1';
+        process.env.MAKA_HARBOR_TOOL_EXECUTOR_TOKEN = 'token';
+        process.env.MAKA_INSTRUCTION = 'Write a CSV summary of log files.';
+        process.env.MAKA_WORKDIR = workspaceDir;
+        process.env.MAKA_OUTPUT_DIR = outputDir;
+        process.env.MAKA_STORAGE_ROOT = storageRoot;
+        process.env.MAKA_SYSTEM_PROMPT = 'Use the host prompt.';
+        process.env.MAKA_ECONOMY_TASK_MODE = 'true';
+        await main({ registerBackends: registerCapturingBackend });
+      } finally {
+        process.env = previousEnv;
+      }
+
+      assert.match(seenPrompts[0] ?? '', /Use the host prompt/);
+      assert.match(seenPrompts[0] ?? '', /Economy-task benchmark policy/);
+    });
+  });
+
+  test('host-side Harbor cell config treats MAKA_ECONOMY_TASK_MODE=false as explicit disable', async () => {
+    const { main } = await import(new URL('../../harbor/run-host-cell.mjs', import.meta.url).href) as {
+      main: (options?: { registerBackends?: (registry: BackendRegistry, context: HeadlessBackendContext) => void }) => Promise<void>;
+    };
+    await withDirs(async ({ workspaceDir, outputDir, storageRoot }) => {
+      const previousEnv = { ...process.env };
+      const seenPrompts: string[] = [];
+      const registerCapturingBackend = (registry: BackendRegistry, context: HeadlessBackendContext): void => {
+        seenPrompts.push(context.config.systemPrompt ?? '');
+        registry.register('ai-sdk', (ctx) =>
+          new CellReportingBackend({ sessionId: ctx.sessionId, header: ctx.header, store: ctx.store }),
+        );
+      };
+      try {
+        process.env.MAKA_PROVIDER = 'openai';
+        process.env.MAKA_MODEL = 'openai/gpt-4o-mini';
+        process.env.MAKA_HOST_API_KEY = 'test-key';
+        process.env.MAKA_HARBOR_TOOL_EXECUTOR_URL = 'http://127.0.0.1:1';
+        process.env.MAKA_HARBOR_TOOL_EXECUTOR_TOKEN = 'token';
+        process.env.MAKA_INSTRUCTION = 'Write a CSV summary of log files.';
+        process.env.MAKA_WORKDIR = workspaceDir;
+        process.env.MAKA_OUTPUT_DIR = outputDir;
+        process.env.MAKA_STORAGE_ROOT = storageRoot;
+        process.env.MAKA_SYSTEM_PROMPT = 'Use the host prompt.';
+        process.env.MAKA_ECONOMY_TASK_MODE = 'false';
+        await main({ registerBackends: registerCapturingBackend });
+      } finally {
+        process.env = previousEnv;
+      }
+
+      assert.match(seenPrompts[0] ?? '', /Use the host prompt/);
+      assert.doesNotMatch(seenPrompts[0] ?? '', /Economy-task benchmark policy/);
+    });
+  });
+
   test('Harbor ai-sdk backend registration exposes native file tools to the provider schema', async () => {
     await withDirs(async ({ workspaceDir }) => {
       const registry = new BackendRegistry();
