@@ -108,6 +108,7 @@
      Done CTA and made every palette read as olive-green. */
   --brand-deep: var(--accent);
   --brand-deep-hover: oklch(from var(--accent) calc(l - 0.06) c h);
+  --bot-brand-default: var(--accent);
 
   /* === text variants (mixed toward foreground for better contrast) === */
   --success-text: color-mix(in oklab, var(--success) 50%, var(--foreground));
@@ -372,6 +373,7 @@
      variant for the darker surface. */
   --brand-deep: var(--accent);
   --brand-deep-hover: oklch(from var(--accent) calc(l + 0.06) c h);
+  --bot-brand-default: var(--accent);
 }
 
 /* =============================================================================
@@ -870,7 +872,7 @@
     content: "";
     width: 6px; height: 6px;
     border-radius: 50%;
-    background: var(--accent);
+    background: var(--status-running);
     flex-shrink: 0;
   }
 
@@ -971,9 +973,9 @@
   .maka-turn-thinking {
     margin: 0 0 8px;
     padding: 8px 10px;
-    border: 1px dashed oklch(from var(--accent) l c h / 0.25);
+    border: 1px dashed oklch(from var(--focus-ring) l c h / 0.25);
     border-radius: var(--radius-surface);
-    background: oklch(from var(--accent) l c h / 0.03);
+    background: oklch(from var(--focus-ring) l c h / 0.03);
     font-size: 12.5px;
     color: var(--foreground-70);
   }
@@ -983,7 +985,7 @@
     align-items: center;
     gap: 8px;
     font-weight: 600;
-    color: var(--accent);
+    color: var(--focus-ring);
     letter-spacing: 0.02em;
     list-style: none;
     /* `cursor: pointer` intentionally omitted — native macOS reserves
@@ -1064,8 +1066,8 @@
   }
 
   .maka-bubble-assistant li.task-list-item > input[type="checkbox"]:checked {
-    background: var(--accent);
-    border-color: var(--accent);
+    background: var(--control);
+    border-color: var(--control);
   }
 
   .maka-bubble-assistant li.task-list-item > input[type="checkbox"]:checked::after {
@@ -1075,7 +1077,7 @@
     top: -1px;
     width: 4px;
     height: 8px;
-    border: solid white;
+    border: solid var(--control-foreground);
     border-width: 0 2px 2px 0;
     transform: rotate(45deg);
   }
@@ -1167,9 +1169,9 @@
   .maka-bubble-assistant li > ul,
   .maka-bubble-assistant li > ol { margin-bottom: 0; }
   .maka-bubble-assistant a {
-    color: var(--accent);
+    color: var(--link);
     text-decoration: none;
-    border-bottom: 1px solid oklch(from var(--accent) l c h / 0.4);
+    border-bottom: 1px solid oklch(from var(--link) l c h / 0.4);
     /* PR-UI-LAYOUT-34: explicit transition so focus state animates
      * smoothly. Also: explicit padding-inline + negative margin so
      * the focus halo has hit area without pushing inline content
@@ -1180,12 +1182,12 @@
     transition: border-bottom-color 120ms var(--ease-out-strong), background 120ms var(--ease-out-strong), box-shadow 120ms var(--ease-out-strong);
   }
   .maka-bubble-assistant a:hover {
-    border-bottom-color: var(--accent);
+    border-bottom-color: var(--link);
   }
   .maka-bubble-assistant a:focus-visible {
     outline: none;
-    background: oklch(from var(--accent) l c h / 0.06);
-    box-shadow: 0 0 0 2px oklch(from var(--accent) l c h / 0.20);
+    background: oklch(from var(--link) l c h / 0.06);
+    box-shadow: 0 0 0 2px oklch(from var(--focus-ring) l c h / 0.20);
   }
   .maka-bubble-assistant code {
     font-family: var(--font-mono);
@@ -1248,7 +1250,7 @@
     outline: none;
     color: var(--foreground);
     background: var(--foreground-10);
-    box-shadow: 0 0 0 3px oklch(from var(--accent) l c h / 0.14);
+    box-shadow: 0 0 0 3px oklch(from var(--focus-ring) l c h / 0.14);
   }
   .maka-code-block-copy[data-copied="true"] {
     color: var(--success-text);
@@ -1287,7 +1289,7 @@
   .hljs-keyword,
   .hljs-selector-tag,
   .hljs-literal,
-  .hljs-tag        { color: oklch(from var(--accent) calc(l - 0.05) calc(c + 0.04) h); }
+  .hljs-tag        { color: oklch(from var(--link) calc(l - 0.05) calc(c + 0.04) h); }
   .hljs-string,
   .hljs-doctag,
   .hljs-regexp     { color: oklch(from var(--success) calc(l + 0.02) c h); }
@@ -1299,7 +1301,7 @@
   .hljs-type,
   .hljs-class .hljs-title,
   .hljs-title.class_,
-  .hljs-title.function_ { color: oklch(from var(--accent) calc(l - 0.1) c calc(h - 30)); }
+  .hljs-title.function_ { color: oklch(from var(--link) calc(l - 0.1) c calc(h - 30)); }
   .hljs-variable,
   .hljs-attr,
   .hljs-attribute,
@@ -1324,7 +1326,7 @@
      * icon + border + saturated tone pattern. The left rule keeps
      * the accent tie so quotes still feel branded, not generic. */
     padding: 8px 16px;
-    border-left: 3px solid oklch(from var(--accent) l c h / 0.28);
+    border-left: 3px solid oklch(from var(--focus-ring) l c h / 0.28);
     background: var(--foreground-3);
     border-radius: 0 var(--radius-surface) var(--radius-surface) 0;
     color: var(--foreground-70);
@@ -1462,8 +1464,8 @@
     content: "▎";
     display: inline-block;
     margin-left: 2px;
-    color: var(--accent);
-    animation: maka-cursor 1.1s var(--ease-in-out-strong) infinite;
+     color: var(--status-running);
+     animation: maka-cursor 1.1s var(--ease-in-out-strong) infinite;
     vertical-align: -2px;
   }
   @keyframes maka-cursor { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
@@ -1495,8 +1497,8 @@
   [data-slot="tool"] > summary::marker { content: ''; }
 
   @keyframes maka-tool-pulse {
-    0%, 100% { box-shadow: 0 0 0 3px oklch(from var(--accent) l c h / 0.15); }
-    50%      { box-shadow: 0 0 0 5px oklch(from var(--accent) l c h / 0.06); }
+    0%, 100% { box-shadow: 0 0 0 3px oklch(from var(--status-running) l c h / 0.15); }
+    50%      { box-shadow: 0 0 0 5px oklch(from var(--status-running) l c h / 0.06); }
   }
 
   /* Canonical "live" pulse for the @maka/ui LiveIndicator primitive (issue
@@ -1553,19 +1555,19 @@
      ugly textarea native outline. PR-UI-LAYOUT-8: ring opacity dropped
      slightly so the focus state feels alert without being aggressive. */
   .maka-composer-inner:focus-within {
-    border-color: oklch(from var(--accent) l c h / 0.40);
+    border-color: oklch(from var(--focus-ring) l c h / 0.40);
     background: var(--background);
     box-shadow:
-      0 0 0 1px oklch(from var(--accent) l c h / 0.20),
-      0 0 0 4px oklch(from var(--accent) l c h / 0.08),
+      0 0 0 1px oklch(from var(--focus-ring) l c h / 0.20),
+      0 0 0 4px oklch(from var(--focus-ring) l c h / 0.08),
       0 1px 3px oklch(from var(--foreground) l c h / 0.04);
   }
   .maka-composer[data-drag-active="true"] .maka-composer-inner {
-    border-color: oklch(from var(--accent) l c h / 0.46);
-    background: oklch(from var(--accent) 0.98 calc(c * 0.20) h / 0.35);
+    border-color: oklch(from var(--focus-ring) l c h / 0.46);
+    background: oklch(from var(--focus-ring) 0.98 calc(c * 0.20) h / 0.35);
     box-shadow:
-      0 0 0 1px oklch(from var(--accent) l c h / 0.22),
-      0 0 0 4px oklch(from var(--accent) l c h / 0.08),
+      0 0 0 1px oklch(from var(--focus-ring) l c h / 0.22),
+      0 0 0 4px oklch(from var(--focus-ring) l c h / 0.08),
       0 1px 3px oklch(from var(--foreground) l c h / 0.04);
   }
   .maka-composer textarea {
@@ -1627,7 +1629,7 @@
   .maka-button:active { background: var(--active); transform: translateY(0.5px); }
   .maka-button:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 3px oklch(from var(--accent) l c h / 0.16);
+    box-shadow: 0 0 0 3px oklch(from var(--focus-ring) l c h / 0.16);
   }
   .maka-button[disabled],
   .maka-button[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
