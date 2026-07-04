@@ -23,7 +23,8 @@ describe('active session message lifecycle contract', () => {
     ]);
     const ui = await readFile(join(process.cwd(), '..', '..', 'packages', 'ui', 'src', 'chat-view.tsx'), 'utf8');
     const activeSessionEffect = src.match(/useLayoutEffect\(\(\) => \{\s*if \(!activeId\) return;[\s\S]*?readMessages\(activeId\)[\s\S]*?\}, \[activeId\]\);/)?.[0] ?? '';
-    const activeReadCatch = activeSessionEffect.match(/readMessages\(activeId\)[\s\S]*?\.catch\(\(error\) => \{[\s\S]*?\n      \}\);/)?.[0] ?? '';
+    const activeReadSuccess = src.match(/const applyReadMessages = useEffectEvent\([\s\S]*?const applyReadError = useEffectEvent/)?.[0] ?? '';
+    const activeReadCatch = src.match(/const applyReadError = useEffectEvent[\s\S]*?const handleSessionEvent = useEffectEvent/)?.[0] ?? '';
     const refreshMessages = src.match(/async function refreshMessages\(sessionId: string\)(?:: Promise<boolean>)? \{[\s\S]*?\n  \}/)?.[0] ?? '';
     const retryMessages = src.match(/async function retryMessages\(sessionId: string\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
 
@@ -53,9 +54,14 @@ describe('active session message lifecycle contract', () => {
       'the new-session-then-send path lets the optimistic user message overwrite the setActiveId clear in the same React batch, so the first message survives until the real read lands',
     );
     assert.match(
-      activeSessionEffect,
-      /if \(!disposed && activeIdRef\.current === activeId\) \{[\s\S]*markSessionReadLocally\(activeId, next\);[\s\S]*if \(next\.length > 0\) setMessages\(next\);[\s\S]*setMessageLoadPending\(false\);[\s\S]*\}/,
+      activeReadSuccess,
+      /if \(!isDisposed\(\) && options\.activeIdRef\.current === sessionId\) \{[\s\S]*options\.markSessionReadLocally\(sessionId, next\);[\s\S]*if \(next\.length > 0\) options\.setMessages\(next\);[\s\S]*options\.setMessageLoadPending\(false\);[\s\S]*\}/,
       'late active-session reads skip an empty result so an in-flight optimistic user message is not blanked while the same session is still active',
+    );
+    assert.match(
+      activeSessionEffect,
+      /applyReadMessages\(activeId, next, \(\) => disposed\)/,
+      'active-session reads must pass the current disposed guard into the late-read effect event',
     );
     assert.match(
       activeReadCatch,
@@ -64,7 +70,7 @@ describe('active session message lifecycle contract', () => {
     );
     assert.match(
       activeReadCatch,
-      /\.catch\(\(error\) => \{[\s\S]*const message = messageReadErrorMessage\(error\);[\s\S]*setMessageLoadErrorBySession\(\(current\) => \(\{ \.\.\.current, \[activeId\]: message \}\)\);[\s\S]*setMessageLoadPending\(false\);[\s\S]*toastApi\.error\('读取对话失败', message\)/,
+      /const message = messageReadErrorMessage\(error\);[\s\S]*options\.setMessageLoadErrorBySession\(\(current\) => \(\{ \.\.\.current, \[sessionId\]: message \}\)\);[\s\S]*options\.setMessageLoadPending\(false\);[\s\S]*options\.toastApi\.error\('读取对话失败', message\)/,
       'active-session read failures must clear pending and set a visible per-session load error after stale content was cleared',
     );
     assert.doesNotMatch(activeReadCatch, /const message = cleanErrorMessage\(error\)/);
