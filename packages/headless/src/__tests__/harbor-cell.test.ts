@@ -19,7 +19,7 @@ import {
 } from '@maka/runtime';
 import { createArtifactStore } from '@maka/storage';
 import type { Config } from '../contracts.js';
-import type { HeadlessBackendContext, IsolatedToolExecutor } from '../isolation.js';
+import type { HeadlessBackendContext, IsolatedCommandResult, IsolatedToolExecutor } from '../isolation.js';
 import {
   buildAiSdkCellBackendRegistration,
   buildHarborCellContextBudgetBackendOptions,
@@ -28,6 +28,7 @@ import {
   buildHarborCellTaskLedgerExperimentPolicy,
   harborCellMaxStepsFromEnv,
   createHarborCellLocalToolExecutor,
+  createHarborHttpToolExecutor,
   HARBOR_CELL_CONTEXT_ENV_KEYS,
   HARBOR_CELL_OUTPUT_FILENAME,
   HARBOR_CELL_RUNTIME_EVENTS_FILENAME,
@@ -37,6 +38,7 @@ import {
   runHarborCell,
   writeHarborCellUsageCheckpoint,
 } from '../harbor-cell.js';
+import { buildIsolatedBashTool } from '../tools.js';
 
 const config: Config = {
   id: 'cell-cfg',
@@ -158,6 +160,96 @@ class DeadlineSettlingBackend implements AgentBackend {
   async stop(_reason: 'user_stop' | 'redirect', mode: BackendStopMode = 'immediate'): Promise<void> {
     this.stopModes.push(mode);
     this.releaseStop();
+  }
+
+  async respondToPermission(_decision: PermissionDecision): Promise<void> {}
+  async dispose(): Promise<void> {}
+}
+
+class NonCooperativeDeadlineBackend implements AgentBackend {
+  readonly sessionId: string;
+  readonly stopModes: BackendStopMode[] = [];
+  private releaseStop!: () => void;
+  private readonly stopped = new Promise<void>((resolve) => {
+    this.releaseStop = resolve;
+  });
+  private readonly fallback: NodeJS.Timeout;
+
+  constructor(sessionId: string, readonly kind: BackendKind = 'fake', fallbackAfterMs = 500) {
+    this.sessionId = sessionId;
+    this.fallback = setTimeout(() => this.releaseStop(), fallbackAfterMs);
+  }
+
+  async *send(input: BackendSendInput): AsyncIterable<SessionEvent> {
+    const ts = Date.now();
+    yield {
+      type: 'token_usage',
+      id: 'usage-before-forced-deadline',
+      turnId: input.turnId,
+      ts,
+      input: 13,
+      output: 5,
+      total: 18,
+      costUsd: 0.004,
+    };
+    await this.stopped;
+    yield { type: 'abort', id: 'forced-deadline-abort', turnId: input.turnId, ts: Date.now(), reason: 'user_stop' };
+    yield { type: 'complete', id: 'forced-deadline-complete', turnId: input.turnId, ts: Date.now(), stopReason: 'user_stop' };
+  }
+
+  async stop(_reason: 'user_stop' | 'redirect', mode: BackendStopMode = 'immediate'): Promise<void> {
+    this.stopModes.push(mode);
+    if (mode !== 'immediate') return;
+    clearTimeout(this.fallback);
+    this.releaseStop();
+  }
+
+  async respondToPermission(_decision: PermissionDecision): Promise<void> {}
+  async dispose(): Promise<void> {}
+}
+
+class ActiveIsolatedToolDeadlineBackend implements AgentBackend {
+  readonly kind: BackendKind = 'ai-sdk';
+  readonly stopModes: BackendStopMode[] = [];
+  private readonly controller = new AbortController();
+
+  constructor(
+    readonly sessionId: string,
+    private readonly executor: IsolatedToolExecutor,
+  ) {}
+
+  async *send(input: BackendSendInput): AsyncIterable<SessionEvent> {
+    const ts = Date.now();
+    yield {
+      type: 'token_usage',
+      id: 'usage-before-active-tool-deadline',
+      turnId: input.turnId,
+      ts,
+      input: 13,
+      output: 5,
+      total: 18,
+      costUsd: 0.004,
+    };
+    const tool = buildIsolatedBashTool(this.executor);
+    try {
+      await tool.impl({ command: 'sleep until cancelled' }, {
+        sessionId: this.sessionId,
+        turnId: input.turnId,
+        cwd: '/workspace',
+        toolCallId: 'active-bash-call',
+        abortSignal: this.controller.signal,
+        emitOutput: () => {},
+      });
+    } catch (error) {
+      if (!this.controller.signal.aborted) throw error;
+    }
+    yield { type: 'abort', id: 'active-tool-deadline-abort', turnId: input.turnId, ts: Date.now(), reason: 'user_stop' };
+    yield { type: 'complete', id: 'active-tool-deadline-complete', turnId: input.turnId, ts: Date.now(), stopReason: 'user_stop' };
+  }
+
+  async stop(_reason: 'user_stop' | 'redirect', mode: BackendStopMode = 'immediate'): Promise<void> {
+    this.stopModes.push(mode);
+    if (mode === 'immediate') this.controller.abort();
   }
 
   async respondToPermission(_decision: PermissionDecision): Promise<void> {}
@@ -568,12 +660,93 @@ describe('runHarborCell', () => {
       }), 10_000, 'Harbor cell did not settle before the hard deadline');
 
       assert.equal(result.settledByDeadline, true);
-      assert.deepEqual(backend?.stopModes, ['after_step']);
+      assert.deepEqual(backend?.stopModes, ['immediate']);
+      assert.equal(result.output.tokenSummary?.total, 18);
+      assert.deepEqual(result.output.deadlineSettlement, {
+        source: 'benchmark.deadline',
+        mode: 'immediate',
+      });
+      assert.deepEqual(
+        JSON.parse(await readFile(join(outputDir, HARBOR_CELL_OUTPUT_FILENAME), 'utf8')),
+        result.output,
+      );
+    });
+  });
+
+  test('force-stops a non-cooperative active step and writes final usage before the hard deadline', async () => {
+    await withDirs(async ({ workspaceDir, outputDir, storageRoot }) => {
+      let backend: NonCooperativeDeadlineBackend | undefined;
+      const result = await withTimeout(runHarborCell({
+        config,
+        instruction: 'keep working until force-stopped',
+        cwd: workspaceDir,
+        outputDir,
+        storageRoot,
+        registerBackends: (registry) => {
+          registry.register('fake', (ctx) => {
+            backend = new NonCooperativeDeadlineBackend(ctx.sessionId, 'fake', 5_000);
+            return backend;
+          });
+        },
+        settleAfterMs: 1_000,
+      }), 3_000, 'Harbor cell did not force-stop before the hard deadline');
+
+      assert.equal(result.settledByDeadline, true);
+      assert.deepEqual(backend?.stopModes, ['immediate']);
       assert.equal(result.output.tokenSummary?.total, 18);
       assert.deepEqual(
         JSON.parse(await readFile(join(outputDir, HARBOR_CELL_OUTPUT_FILENAME), 'utf8')),
         result.output,
       );
+    });
+  });
+
+  test('force-stops an active isolated tool and writes final artifacts before the hard deadline', async () => {
+    await withDirs(async ({ workspaceDir, outputDir, storageRoot }) => {
+      let backend: ActiveIsolatedToolDeadlineBackend | undefined;
+      let releaseFallback!: () => void;
+      const fallback = new Promise<IsolatedCommandResult>((resolve) => {
+        releaseFallback = () => resolve({ exitCode: 0, stdout: '', stderr: '' });
+      });
+      const fallbackTimer = setTimeout(releaseFallback, 5_000);
+      const executor: IsolatedToolExecutor = {
+        exec: async (_input, control) => {
+          const signal = control?.abortSignal;
+          if (!signal) return await fallback;
+          return await new Promise<IsolatedCommandResult>((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+          });
+        },
+      };
+      const result = await withTimeout(runHarborCell({
+        config: { ...config, backend: 'ai-sdk' },
+        instruction: 'run a tool until force-stopped',
+        cwd: workspaceDir,
+        outputDir,
+        storageRoot,
+        settleAfterMs: 1_000,
+        realBackendIsolation: {
+          kind: 'external',
+          label: 'cancellable test executor',
+          toolExecutor: executor,
+        },
+        registerBackends: (registry, context) => {
+          if (!context.toolExecutor) throw new Error('missing isolated tool executor');
+          registry.register('ai-sdk', (ctx) => {
+            backend = new ActiveIsolatedToolDeadlineBackend(ctx.sessionId, context.toolExecutor!);
+            return backend;
+          });
+        },
+      }), 3_000, 'Harbor cell did not cancel its active isolated tool');
+      clearTimeout(fallbackTimer);
+
+      assert.equal(result.settledByDeadline, true);
+      assert.deepEqual(backend?.stopModes, ['immediate']);
+      assert.equal(result.output.tokenSummary?.total, 18);
+      assert.deepEqual(result.output.deadlineSettlement, {
+        source: 'benchmark.deadline',
+        mode: 'immediate',
+      });
     });
   });
 
@@ -1310,7 +1483,7 @@ describe('runHarborCell', () => {
     });
   });
 
-  test('host-side Harbor cell returns after settling at its soft deadline', async () => {
+  test('host-side Harbor cell force-stops a non-cooperative step at its soft deadline', async () => {
     const { main } = await import(new URL('../../harbor/run-host-cell.mjs', import.meta.url).href) as {
       main: (options?: { registerBackends?: (registry: BackendRegistry) => void }) => Promise<unknown>;
     };
@@ -1329,13 +1502,17 @@ describe('runHarborCell', () => {
         process.env.MAKA_CELL_SOFT_TIMEOUT_MS = '1000';
         const result = await withTimeout(main({
           registerBackends: (registry) => {
-            registry.register('ai-sdk', (ctx) => new DeadlineSettlingBackend(ctx.sessionId, 'ai-sdk'));
+            registry.register('ai-sdk', (ctx) => new NonCooperativeDeadlineBackend(ctx.sessionId, 'ai-sdk', 2_000));
           },
         }), 10_000, 'host cell did not honor its soft deadline');
 
         assert.equal(Reflect.get(result as object, 'settledByDeadline'), true);
         const output = JSON.parse(await readFile(join(outputDir, HARBOR_CELL_OUTPUT_FILENAME), 'utf8'));
         assert.equal(output.tokenSummary.total, 18);
+        assert.deepEqual(output.deadlineSettlement, {
+          source: 'benchmark.deadline',
+          mode: 'immediate',
+        });
       } finally {
         process.env = previousEnv;
       }
@@ -3484,7 +3661,66 @@ setTimeout(() => {
 
 });
 
+describe('createHarborHttpToolExecutor', () => {
+  test('forwards active-tool cancellation to fetch without serializing execution control', async () => {
+    const previousFetch = globalThis.fetch;
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | null | undefined;
+    let observedBody: unknown;
+    try {
+      globalThis.fetch = async (_input, init) => {
+        observedSignal = init?.signal;
+        observedBody = JSON.parse(String(init?.body));
+        return new Response(JSON.stringify({ exitCode: 0, stdout: 'ok', stderr: '' }), { status: 200 });
+      };
+      const executor = createHarborHttpToolExecutor({
+        MAKA_HARBOR_TOOL_EXECUTOR_URL: 'http://127.0.0.1:1',
+        MAKA_HARBOR_TOOL_EXECUTOR_TOKEN: 'test-token',
+      });
+
+      await executor.exec(
+        { command: 'sleep until cancelled', cwd: '/workspace' },
+        { abortSignal: controller.signal },
+      );
+
+      assert.equal(observedSignal, controller.signal);
+      assert.deepEqual(observedBody, {
+        command: 'sleep until cancelled',
+        cwd: '/workspace',
+      });
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+});
+
 describe('createHarborCellLocalToolExecutor', () => {
+  test('cancels a bounded-tail Bash command when the active tool is aborted', async () => {
+    const executor = createHarborCellLocalToolExecutor({ MAKA_CELL_COMMAND_TIMEOUT_MS: '10000' });
+    const controller = new AbortController();
+    const run = executor.exec(
+      { command: 'sleep 1', cwd: process.cwd(), boundedTail: true },
+      { abortSignal: controller.signal },
+    );
+    setTimeout(() => controller.abort(), 20);
+
+    const result = await withTimeout(run, 250, 'local isolated command ignored tool cancellation');
+    assert.notEqual(result.exitCode, 0);
+  });
+
+  test('cancels a full-output file command when the active tool is aborted', async () => {
+    const executor = createHarborCellLocalToolExecutor({ MAKA_CELL_COMMAND_TIMEOUT_MS: '10000' });
+    const controller = new AbortController();
+    const run = executor.exec(
+      { command: 'sleep 1', cwd: process.cwd() },
+      { abortSignal: controller.signal },
+    );
+    setTimeout(() => controller.abort(), 20);
+
+    const result = await withTimeout(run, 250, 'local isolated file command ignored tool cancellation');
+    assert.notEqual(result.exitCode, 0);
+  });
+
   test('lets MAKA_CELL_COMMAND_TIMEOUT_MS lower the default per-command timeout', async () => {
     const executor = createHarborCellLocalToolExecutor({ MAKA_CELL_COMMAND_TIMEOUT_MS: '50' });
     const result = await executor.exec({ command: 'sleep 1', cwd: process.cwd() });

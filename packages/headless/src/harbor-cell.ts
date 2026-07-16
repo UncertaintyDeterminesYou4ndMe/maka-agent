@@ -1,7 +1,7 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { exec as nodeExec } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -390,7 +390,7 @@ export async function runHarborCell(input: RunHarborCellInput): Promise<RunHarbo
         deadlineReached = true;
         settlementAttempt = manager.stopSession(session.id, {
           source: 'benchmark_deadline',
-          mode: 'after_step',
+          mode: 'immediate',
         }).catch((error) => {
           settlementError = error;
         });
@@ -458,16 +458,19 @@ export async function runHarborCell(input: RunHarborCellInput): Promise<RunHarbo
   await mkdir(input.outputDir, { recursive: true });
   const runtimeEventsPath = join(input.outputDir, HARBOR_CELL_RUNTIME_EVENTS_FILENAME);
   const outputPath = join(input.outputDir, HARBOR_CELL_OUTPUT_FILENAME);
-  await writeFile(runtimeEventsPath, runtimeEventsJsonl(combinedInvocation), 'utf8');
+  await writeHarborCellArtifact(runtimeEventsPath, runtimeEventsJsonl(combinedInvocation));
   const output = validateHarborCellOutput(buildHarborCellOutput({
     invocation: combinedInvocation,
     runtimeEventsPath,
     executionIdentity,
+    ...(settledByDeadline
+      ? { deadlineSettlement: { source: 'benchmark.deadline' as const, mode: 'immediate' as const } }
+      : {}),
     ...(input.contextBudgetPolicy ? { contextBudgetPolicy: input.contextBudgetPolicy } : {}),
     ...(continuationSummary ? { continuationSummary } : {}),
     ...(input.taskToolSummaryEnabled !== undefined ? { taskToolSummaryEnabled: input.taskToolSummaryEnabled } : {}),
   }));
-  await writeFile(outputPath, `${JSON.stringify(output, null, 2)}\n`, 'utf8');
+  await writeHarborCellArtifact(outputPath, `${JSON.stringify(output, null, 2)}\n`);
 
   return { invocation: combinedInvocation, output, outputPath, runtimeEventsPath, settledByDeadline };
 }
@@ -823,9 +826,17 @@ export async function writeHarborCellUsageCheckpoint(
   };
   await mkdir(outputDir, { recursive: true });
   const path = join(outputDir, HARBOR_CELL_USAGE_CHECKPOINT_FILENAME);
-  const pendingPath = `${path}.${process.pid}.tmp`;
-  await writeFile(pendingPath, `${JSON.stringify(tokenSummary, null, 2)}\n`, 'utf8');
-  await rename(pendingPath, path);
+  await writeHarborCellArtifact(path, `${JSON.stringify(tokenSummary, null, 2)}\n`);
+}
+
+async function writeHarborCellArtifact(path: string, contents: string): Promise<void> {
+  const pendingPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(pendingPath, contents, { encoding: 'utf8', flush: true });
+    await rename(pendingPath, path);
+  } finally {
+    await rm(pendingPath, { force: true });
+  }
 }
 
 export function buildHarborCellAiSdkTools(
@@ -1350,7 +1361,7 @@ export function createHarborHttpToolExecutor(env: RunHarborCellEnv = process.env
   const baseUrl = requiredHarborEnv(env, 'MAKA_HARBOR_TOOL_EXECUTOR_URL');
   const token = requiredHarborEnv(env, 'MAKA_HARBOR_TOOL_EXECUTOR_TOKEN');
   return {
-    exec: async (input) => {
+    exec: async (input, control) => {
       const timeoutSec = input.timeoutMs === undefined
         ? undefined
         : Math.max(1, Math.ceil(input.timeoutMs / 1000));
@@ -1364,6 +1375,7 @@ export function createHarborHttpToolExecutor(env: RunHarborCellEnv = process.env
           ...input,
           ...(timeoutSec !== undefined ? { timeoutSec } : {}),
         }),
+        signal: control?.abortSignal,
       });
       const body = await response.text();
       if (!response.ok) return { exitCode: 1, stdout: '', stderr: body };
@@ -1392,7 +1404,7 @@ export function createHarborCellLocalToolExecutor(env: RunHarborCellEnv = proces
   const shell = defaultShellPlan();
   return {
     shell,
-    exec: async ({ command, cwd, timeoutMs, boundedTail }) => {
+    exec: async ({ command, cwd, timeoutMs, boundedTail }, control) => {
       if (boundedTail) {
         // Bash opted in: stream into a bounded tail (shared with the in-process
         // builtin Bash) instead of execAsync({ maxBuffer }). A command whose
@@ -1403,6 +1415,7 @@ export function createHarborCellLocalToolExecutor(env: RunHarborCellEnv = proces
             cwd,
             env: childEnv,
             timeoutMs: timeoutMs ?? defaultTimeoutMs,
+            abortSignal: control?.abortSignal,
             shell,
           });
           return {
@@ -1432,6 +1445,7 @@ export function createHarborCellLocalToolExecutor(env: RunHarborCellEnv = proces
           env: childEnv,
           timeout: timeoutMs ?? defaultTimeoutMs,
           maxBuffer: HARBOR_CELL_TOOL_MAX_BUFFER_BYTES,
+          signal: control?.abortSignal,
         });
         return { exitCode: 0, stdout: result.stdout, stderr: result.stderr };
       } catch (error) {
