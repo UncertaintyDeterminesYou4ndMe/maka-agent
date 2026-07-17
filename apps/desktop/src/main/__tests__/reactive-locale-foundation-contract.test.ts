@@ -19,13 +19,22 @@ describe('reactive locale foundation', () => {
     const shellAppearance = rendererSource('use-shell-appearance.ts');
     const html = rendererSource('index.html');
 
-    assert.match(shellAppearance, /useState<UiLocalePreference>\('auto'\)/);
-    assert.match(shellAppearance, /useState<UiLocale \| null>\(null\)/);
+    assert.match(source, /useState<UiLocalePreference>\('auto'\)/);
+    assert.match(source, /useState<UiLocale \| null>\(null\)/);
+    assert.match(
+      source,
+      /const uiLocale = resolveUiLocale\(uiLocalePreference, uiLocaleOverride\)/,
+    );
+    assert.equal(
+      (source.match(/resolveUiLocale\(/g) ?? []).length,
+      1,
+      'AppShell must derive one locale exactly once',
+    );
     assert.match(shellAppearance, /setUiLocalePreference\(preference\)/);
     assert.match(shellAppearance, /setUiLocaleOverride\(smoke\?\.locale \?\? null\)/);
     assert.match(
       source,
-      /<LocaleProvider preference=\{uiLocalePreference\} override=\{uiLocaleOverride\}>[\s\S]*?<AppShellOverlays/,
+      /<LocaleProvider locale=\{uiLocale\} override=\{uiLocaleOverride\}>[\s\S]*?<AppShellOverlays/,
     );
     assert.match(html, /<html lang="zh">/, 'the pre-React document must match auto -> zh');
   });

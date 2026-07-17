@@ -47,7 +47,7 @@ describe('session health notice layout contract (#1032)', () => {
       surface,
       /className="maka-session-health-notice"[\s\S]*?role="status"/,
     );
-    assert.match(surface, /sessionHealthNotice\.onClickTarget === 'account' \? '去账号' : '去模型'/);
+    assert.match(surface, /sessionHealthNotice\.onClickTarget === 'account' \? copy\.goToAccount : copy\.goToModels/);
     assert.match(composerRegion, /className="maka-composer-interaction-slot"/);
   });
 

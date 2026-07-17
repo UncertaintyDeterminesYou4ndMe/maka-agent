@@ -1,5 +1,4 @@
-import { useState } from 'react';
-import { generalizedErrorMessageChinese } from '@maka/core';
+import { useState, type Dispatch, type SetStateAction } from 'react';
 import type {
   ChatDefaultPermissionMode,
   ThemePalette,
@@ -9,6 +8,7 @@ import type {
 } from '@maka/core';
 import { createUiLocaleUpdateGate } from './settings/ui-locale-update-gate';
 import { applyTheme, applyThemePalette } from './theme';
+import { getShellCopy, localizedShellErrorMessage } from './locales/shell-copy';
 
 type ToastApi = {
   error(title: string, description?: string): void;
@@ -25,11 +25,19 @@ type ToastApi = {
  * permission mode (cross-slice orchestration with onboarding / memory). The
  * full settings hydration lives here.
  */
-export function useShellAppearance({ toastApi }: { toastApi: ToastApi }) {
+export function useShellAppearance({
+  toastApi,
+  uiLocale,
+  setUiLocaleOverride,
+  setUiLocalePreference,
+}: {
+  toastApi: ToastApi;
+  uiLocale: UiLocale;
+  setUiLocaleOverride: Dispatch<SetStateAction<UiLocale | null>>;
+  setUiLocalePreference: Dispatch<SetStateAction<UiLocalePreference>>;
+}) {
   const [themePref, setThemePref] = useState<ThemePreference>('auto');
   const [themePalette, setThemePalette] = useState<ThemePalette>('default');
-  const [uiLocalePreference, setUiLocalePreference] = useState<UiLocalePreference>('auto');
-  const [uiLocaleOverride, setUiLocaleOverride] = useState<UiLocale | null>(null);
   const [uiLocaleUpdateGate] = useState(createUiLocaleUpdateGate);
   const [userLabel, setUserLabel] = useState<string>('');
   // Settings -> 通用 -> 默认权限模式 - DISPLAY-ONLY mirror. The composer's
@@ -62,7 +70,11 @@ export function useShellAppearance({ toastApi }: { toastApi: ToastApi }) {
       applyTheme(pref);
       applyThemePalette(palette);
     } catch (error) {
-      toastApi.error('载入外观设置失败', generalizedErrorMessageChinese(error, '外观设置暂时无法载入，请稍后重试。'));
+      const copy = getShellCopy(uiLocale).app;
+      toastApi.error(
+        copy.appearanceLoadErrorTitle,
+        localizedShellErrorMessage(error, copy.appearanceLoadErrorFallback, uiLocale),
+      );
     }
   }
 
@@ -71,10 +83,6 @@ export function useShellAppearance({ toastApi }: { toastApi: ToastApi }) {
     setThemePref,
     themePalette,
     setThemePalette,
-    uiLocalePreference,
-    uiLocaleOverride,
-    setUiLocaleOverride,
-    setUiLocalePreference,
     uiLocaleUpdateGate,
     userLabel,
     setUserLabel,

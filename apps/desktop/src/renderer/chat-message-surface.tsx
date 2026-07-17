@@ -1,8 +1,9 @@
 import type { ComponentProps, ReactNode } from 'react';
 import type { LlmConnection, OnboardingState, QuickChatMode, SettingsSection } from '@maka/core';
-import { Alert, AlertAction, AlertDescription, AlertTitle, ChatView } from '@maka/ui';
+import { Alert, AlertAction, AlertDescription, AlertTitle, ChatView, useUiLocale } from '@maka/ui';
 import { OnboardingEmptyState } from './onboarding-empty-state';
 import type { SessionHealthNoticeView } from './use-shell-chat-model';
+import { getShellCopy } from './locales/shell-copy';
 
 /**
  * The sessions-section message surface (issue #1043): ChatView plus the
@@ -48,6 +49,7 @@ export function ChatMessageSurface({
   onStartPlanReminder,
   ...chatViewRest
 }: ChatMessageSurfaceProps) {
+  const copy = getShellCopy(useUiLocale()).app;
   const emptyOverride: ReactNode =
     showOnboardingHero && onboardingState ? (
       <OnboardingEmptyState
@@ -72,7 +74,7 @@ export function ChatMessageSurface({
         className="maka-onboarding-loading"
         role="status"
         aria-busy="true"
-        aria-label="加载中"
+        aria-label={copy.loading}
       />
     ) : undefined;
 
@@ -98,7 +100,7 @@ export function ChatMessageSurface({
                 className="maka-session-health-notice-action"
                 onClick={sessionHealthNotice.onClick}
               >
-                {sessionHealthNotice.onClickTarget === 'account' ? '去账号' : '去模型'}
+                {sessionHealthNotice.onClickTarget === 'account' ? copy.goToAccount : copy.goToModels}
               </button>
             </AlertAction>
           </Alert>

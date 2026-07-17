@@ -1,16 +1,19 @@
 import { lazy, Suspense } from 'react';
 import type { KeyboardEvent, PointerEvent } from 'react';
+import { useUiLocale } from '@maka/ui';
 import type { SessionWorkbarTab } from './session-workbar-layout';
 import { SESSION_WORKBAR_MAX_WIDTH, SESSION_WORKBAR_MIN_WIDTH } from './session-workbar-layout';
+import { getShellCopy } from './locales/shell-copy';
 
 // The session workbar owns the task ledger, embedded browser, and artifact
 // preview. Keep the combined auxiliary surface out of the first chat paint.
 const SessionWorkbar = lazy(() => import('./session-workbar').then((m) => ({ default: m.SessionWorkbar })));
 
 function SessionWorkbarFallback() {
+  const copy = getShellCopy(useUiLocale()).app;
   return (
-    <aside className="maka-session-workbar" role="status" aria-busy="true" aria-label="正在加载会话工作栏">
-      <div className="maka-lazy-fallback" data-surface="panel">正在加载会话工作栏…</div>
+    <aside className="maka-session-workbar" role="status" aria-busy="true" aria-label={copy.loadingWorkbarLabel}>
+      <div className="maka-lazy-fallback" data-surface="panel">{copy.loadingWorkbar}</div>
     </aside>
   );
 }
@@ -45,12 +48,13 @@ export function ChatWorkbar({
   startWorkbarResize,
   onWorkbarResizeHandleKeyDown,
 }: ChatWorkbarProps) {
+  const copy = getShellCopy(useUiLocale()).app;
   return (
     <>
       <div
         className="maka-workbar-resize-handle"
         role="separator"
-        aria-label="调整会话工作栏宽度"
+        aria-label={copy.resizeWorkbar}
         aria-orientation="vertical"
         aria-valuemin={SESSION_WORKBAR_MIN_WIDTH}
         aria-valuemax={SESSION_WORKBAR_MAX_WIDTH}
