@@ -151,6 +151,9 @@ export interface FailedTurnRecoveryInput {
 export function deriveFailedTurnRecovery(input: FailedTurnRecoveryInput, locale: UiLocale = 'zh'): FailedTurnRecoveryPresentation {
   const copy = getDesktopConversationCopy(locale).turnError.recovery;
   const lower = input.errorClass?.toLowerCase() ?? '';
+  if (lower === 'app_restarted') {
+    return { action: 'continue', label: copy.safeResume };
+  }
   if (lower === 'tool_step_cap_reached') {
     return { action: 'continue', label: copy.stepCap };
   }

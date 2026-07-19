@@ -96,8 +96,12 @@ export type {
   RuntimeEventContentKind,
   RuntimeEventTokenUsage,
   RuntimeEventPermissionDecision,
+  RuntimeEventProtocolMarker,
+  RuntimeEventToolDispatch,
   RuntimeEventActions,
   RuntimeEventRefs,
+  ToolBoundaryProtocol,
+  ToolRecoveryMode,
 } from './runtime-event.js';
 export {
   RUNTIME_EVENT_ROLES,
@@ -105,6 +109,7 @@ export {
   RUNTIME_EVENT_STATUSES,
   TERMINAL_RUNTIME_EVENT_STATUSES,
   RUNTIME_EVENT_CONTENT_KINDS,
+  TOOL_BOUNDARY_PROTOCOL_V1,
   isRuntimeEventRole,
   isRuntimeEventAuthor,
   isRuntimeEventStatus,
@@ -205,6 +210,7 @@ export {
   AGENT_RUN_STATUSES,
   decodeAgentRunEvent,
   decodeAgentRunHeader,
+  isSessionInlineRun,
 } from './agent-run.js';
 
 // shell-run.ts
@@ -979,6 +985,7 @@ export {
 // backend-types.ts
 export type {
   BackendSendInput,
+  RuntimeContinuationMetadata,
   PermissionDecision,
   AgentBackend,
   BackendCompactHistoryInput,

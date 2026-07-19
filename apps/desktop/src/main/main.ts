@@ -57,6 +57,7 @@ import {
   buildExpertDispatchToolForTeamId,
   buildParentAgentTools,
   buildSubagentToolGroup,
+  createLocalContinuationSafetyInspector,
   getAIModel,
   generateSessionTitle as generateRuntimeSessionTitle,
   buildProviderOptions,
@@ -89,7 +90,7 @@ import {
   createReadImageSnapshotter,
   createConnectionStore,
   createPlanReminderStore,
-  createRuntimeEventStore,
+  openRuntimeEventPersistence,
   createSessionStore,
   createSettingsStore,
   createMcpConfigStore,
@@ -266,7 +267,11 @@ let configWatcher: ConfigFileWatcher | undefined;
 const keepSystemAwake = createKeepSystemAwakeController(powerSaveBlocker);
 const store = createSessionStore(workspaceRoot);
 const runStore = createAgentRunStore(workspaceRoot);
-const runtimeEventStore = createRuntimeEventStore(workspaceRoot);
+const runtimePersistence = await openRuntimeEventPersistence({
+  workspaceRoot,
+  sqliteCanonical: process.env.MAKA_RUNTIME_SQLITE_CANONICAL === '1',
+});
+const runtimeEventStore = runtimePersistence.runtimeEventStore;
 const shellRunStore = createShellRunStore(workspaceRoot);
 const connectionStore = createConnectionStore(workspaceRoot);
 const settingsStore = createSettingsStore(workspaceRoot);
@@ -1035,6 +1040,9 @@ backends.register('ai-sdk', async (ctx) => {
     archiveToolResult: (event: ToolResultArchiveRecorderInput) => persistArchivedToolResult(event),
     readToolResultArchive: (event: ToolResultArchiveReaderInput) => readArchivedToolResult(event),
     readAttachmentBytes: createAttachmentByteReader({ artifactStore, sessionId: ctx.sessionId }),
+    ...(runtimePersistence.runtimeCommitStore
+      ? { runtimeCommitSink: runtimePersistence.runtimeCommitStore }
+      : {}),
     supportsVision,
     loadHistoryCompact: (event) => loadHistoryCompactBlocksFromArtifacts(artifactStore, event),
     loadHistoryCompactCheckpoint: ctx.loadHistoryCompactCheckpoint,
@@ -1085,9 +1093,37 @@ const runtime = new SessionManager({
   store,
   runStore,
   runtimeEventStore,
+  ...(runtimePersistence.runtimeCommitStore
+    ? { toolBoundaryProtocol: runtimePersistence.runtimeCommitStore.toolBoundaryProtocol }
+    : {}),
   shellRuns,
   backends,
   childTools: childAgentTools,
+  safeBoundaryResumeEnabled: process.env.MAKA_RUNTIME_SAFE_BOUNDARY_RESUME === '1',
+  onContinuationLifecycleEvent: (event) => {
+    console.info('[runtime-resume]', JSON.stringify(event));
+  },
+  inspectContinuationSafety: createLocalContinuationSafetyInspector({
+    readSessionCwd: async (sessionId) => (await store.readHeader(sessionId)).cwd,
+    listAvailableToolNames: async () => [
+      ...builtinTools.map((tool) => tool.name),
+      'expert_dispatch',
+    ],
+    hasPendingBackgroundOperations: async (sessionId) => {
+      const [shellUpdates, runs] = await Promise.all([
+        shellRuns.listSessionUpdates(sessionId),
+        runStore.listSessionRuns(sessionId),
+      ]);
+      return (
+        shellUpdates.some((update) => update.result.status === 'running') ||
+        runs.some(
+          (run) =>
+            run.parentRunId !== undefined &&
+            ['created', 'running', 'waiting_permission'].includes(run.status),
+        )
+      );
+    },
+  }),
   listArtifactsForTurn: async (sessionId, turnId) =>
     (await artifactStore.list(sessionId)).filter((artifact) =>
       artifact.turnId === turnId && artifact.status !== 'deleted'
@@ -1598,6 +1634,16 @@ function emitSessionsChanged(
 async function recoverInterruptedSessionsOnStartup(): Promise<void> {
   try {
     await runtime.recoverInterruptedSessions();
+    if (process.env.MAKA_RUNTIME_SAFE_BOUNDARY_RESUME !== '1') return;
+    for (const session of await runtime.listSessions()) {
+      const plan = await runtime.planLatestAuthoritativeSafeBoundaryContinuation(session.id);
+      if (!plan.continuation) continue;
+      const iterator = runtime.resumeSafeBoundaryContinuation(plan.continuation);
+      void streamEvents(session.id, iterator, {
+        turnId: plan.continuation.turnId,
+        goalBoundary: 'none',
+      });
+    }
   } catch {
     // Best-effort: startup should still reach the renderer so users can inspect
     // and repair any remaining local session state.
@@ -1805,6 +1851,7 @@ async function runBeforeQuitCleanup(): Promise<void> {
   for (const result of results) {
     if (result.status === 'rejected') console.error('[shutdown] cleanup failed:', result.reason);
   }
+  runtimePersistence.close();
 }
 
 function computerUseCapabilityInput() {
