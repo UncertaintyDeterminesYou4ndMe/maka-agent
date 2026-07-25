@@ -266,6 +266,73 @@ test('capability diagnostics stay contained when expanded at the window floor', 
   ).toBe(true);
 });
 
+/**
+ * #1364 — list-page geometry at the window floor.
+ *
+ * Usage: the requests DataTable's nowrap column recipe gives it an intrinsic
+ * width wider than the settings column even at full window width; it must
+ * scroll inside its own container (#1360 fix) instead of dragging the page
+ * into horizontal scroll, and the five-tab bar scrolls within itself the same
+ * way. Web search: unbreakable tokens (env-var hint, result hostnames/URLs)
+ * must wrap instead of widening the page.
+ *
+ * Memory is asserted per-surface (the prompt-preview header), not as a
+ * whole-page containment check: its `.settingsFormRow` rows overflow at the
+ * floor through the shared settings-rows primitive — routed to #1360 and in
+ * #1362's row-wrapping scope, not patched per-page here.
+ */
+test('usage and web search stay contained at the window floor', async ({ window: page }) => {
+  await page.setViewportSize({ width: 480, height: 900 });
+  const settings = await openSettings(page);
+
+  await settings.getByRole('button', { name: '使用统计', exact: true }).click();
+  const tabsBar = settings.locator('.settingsUsageTabsBar');
+  await expect(tabsBar).toBeVisible();
+  await expect(tabsBar).toHaveCSS('overflow-x', 'auto');
+  await expect.poll(async () => {
+    const { trackCount, valuesContained } = await summaryGeometry(
+      settings.locator('.settingsUsageSummary'),
+    );
+    return { foldedToFewTracks: trackCount <= 2, valuesContained };
+  }).toEqual({ foldedToFewTracks: true, valuesContained: true });
+  await expect.poll(
+    () => settings.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+
+  // Not `exact`: the nav entry's accessible name carries its Beta badge.
+  await settings.getByRole('button', { name: '联网搜索' }).click();
+  const disabledReason = settings.locator('.settingsWebSearchDisabledReason');
+  await expect(disabledReason).toBeVisible();
+  await expect(disabledReason).toHaveCSS('overflow-wrap', 'anywhere');
+  await expect.poll(
+    () => settings.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+
+  await settings.getByRole('button', { name: '记忆', exact: true }).click();
+  const previewHeader = settings.locator('.settingsMemoryPromptPreviewHeader');
+  await expect(previewHeader).toBeVisible();
+  await expect(previewHeader).toHaveCSS('flex-wrap', 'wrap');
+  await expect.poll(
+    () =>
+      previewHeader.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+});
+
+test('usage keeps one summary track per metric when wide', async ({ window: page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const settings = await openSettings(page);
+  await settings.getByRole('button', { name: '使用统计', exact: true }).click();
+
+  // `auto-fit` must not cost the full-width layout: four metrics, four tracks.
+  await expect(settings.locator('.settingsUsageSummary')).toBeVisible();
+  await expect.poll(async () => {
+    const { trackCount, tileCount } = await summaryGeometry(
+      settings.locator('.settingsUsageSummary'),
+    );
+    return { trackCount, tileCount };
+  }).toEqual({ trackCount: 4, tileCount: 4 });
+});
+
 test('remote access opens a channel detail from the overview and returns', async ({ window: page }) => {
   await page.getByRole('button', { name: '展开侧边栏' }).click();
   await page.getByRole('button', { name: '设置' }).click();
