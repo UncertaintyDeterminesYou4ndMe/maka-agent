@@ -598,19 +598,54 @@ test('general form rows stack at the window floor and stay two-column when wide'
   await expect(incognitoRow).toHaveCSS('flex-direction', 'row');
   await expect.poll(rowTrackCount).toBe(1);
 
-  // The proxy sub-form only renders behind the switch; its 3-column grid
-  // (150px + 84px floors) was the widest thing on the page and must fold
-  // to one column on a narrow card.
+  // The proxy sub-form only renders behind the switches: the 3-column
+  // protocol/host/port grid (150px + 84px floors) was the widest thing on
+  // the page, and the auth username/password grid is the plain 2-column
+  // `.settingsFormGrid` — both must fold to one column on a narrow card
+  // (they are separate CSS selectors; either could regress alone).
   await settings.getByRole('switch', { name: '启用代理服务器' }).click();
-  const proxyGrid = settings.locator('.settingsFormGridProxy');
-  await expect(proxyGrid).toBeVisible();
+  await settings.getByRole('switch', { name: '启用代理认证' }).click();
+  const gridTrackCounts = () =>
+    settings
+      .locator('.settingsFormGrid')
+      .evaluateAll((elements) =>
+        elements.map(
+          (element) => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length,
+        ),
+      );
+  await expect(settings.locator('.settingsFormGridProxy')).toBeVisible();
+  // Both grids rendered (proxy + auth), each folded to one column.
+  await expect.poll(gridTrackCounts).toEqual([1, 1]);
+
+  await expect.poll(
+    () => settings.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+});
+
+/**
+ * #1362 review follow-up: the user-facing result of the palette-label wrap —
+ * at the window floor the full name stays readable (the old nowrap+ellipsis
+ * cut "Catppuccin Mocha" to "Catppucc…" with no way to recover it).
+ */
+test('appearance palette names stay fully visible at the window floor', async ({
+  window: page,
+}) => {
+  await page.setViewportSize({ width: 480, height: 900 });
+  const settings = await openSettings(page);
+  await settings.getByRole('button', { name: '外观', exact: true }).click();
+
+  const label = settings
+    .locator('.settingsThemeLabel strong')
+    .filter({ hasText: 'Catppuccin Mocha' });
+  await expect(label).toBeVisible();
+  // Wrapping, not clipping: nothing hides past the box in either axis.
   await expect.poll(
     () =>
-      proxyGrid.evaluate(
-        (element) => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length,
-      ),
-  ).toBe(1);
-
+      label.evaluate((element) => ({
+        horizontallyContained: element.scrollWidth <= element.clientWidth,
+        verticallyContained: element.scrollHeight <= element.clientHeight,
+      })),
+  ).toEqual({ horizontallyContained: true, verticallyContained: true });
   await expect.poll(
     () => settings.evaluate((element) => element.scrollWidth <= element.clientWidth),
   ).toBe(true);
