@@ -563,3 +563,55 @@ test('remote access prioritizes a configured channel that needs attention', asyn
     () => settings.evaluate((element) => element.scrollWidth <= element.clientWidth),
   ).toBe(true);
 });
+
+/**
+ * #1362 — THE row-wrapping decision for the settings form-row pages. The
+ * `.settingsRows` card is an inline-size query container; below 460px of
+ * CARD width (not viewport width — the content column is narrower than the
+ * window by the nav sidebar) label/control rows stack vertically, and the
+ * proxy form grids collapse to one column. Switch rows are the exception:
+ * a ~40px switch always fits beside its label. Locks both directions so
+ * neither the narrow stacking nor the wide two-column layout regresses.
+ */
+test('general form rows stack at the window floor and stay two-column when wide', async ({ window: page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const settings = await openSettings(page);
+  await settings.getByRole('button', { name: '通用', exact: true }).click();
+
+  const displayNameRow = settings
+    .locator('.settingsFormRow')
+    .filter({ has: page.getByLabel('显示名称') });
+  const incognitoRow = settings.locator('.settingsFormRow').filter({ hasText: '隐身模式' });
+  const modelRow = settings.locator('.settingsRow').filter({ hasText: '默认模型' });
+  const rowTrackCount = () =>
+    modelRow.evaluate(
+      (element) => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length,
+    );
+
+  // Wide: unchanged layout — label and control share one line.
+  await expect(displayNameRow).toHaveCSS('flex-direction', 'row');
+  await expect.poll(rowTrackCount).toBe(2);
+
+  // Window floor: rows stack; switch rows keep the control beside the label.
+  await page.setViewportSize({ width: 480, height: 900 });
+  await expect(displayNameRow).toHaveCSS('flex-direction', 'column');
+  await expect(incognitoRow).toHaveCSS('flex-direction', 'row');
+  await expect.poll(rowTrackCount).toBe(1);
+
+  // The proxy sub-form only renders behind the switch; its 3-column grid
+  // (150px + 84px floors) was the widest thing on the page and must fold
+  // to one column on a narrow card.
+  await settings.getByRole('switch', { name: '启用代理服务器' }).click();
+  const proxyGrid = settings.locator('.settingsFormGridProxy');
+  await expect(proxyGrid).toBeVisible();
+  await expect.poll(
+    () =>
+      proxyGrid.evaluate(
+        (element) => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length,
+      ),
+  ).toBe(1);
+
+  await expect.poll(
+    () => settings.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+});
