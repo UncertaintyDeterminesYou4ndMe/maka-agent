@@ -682,10 +682,20 @@ const withUsagePopulatedBridge = withScopedMakaBridge({
   },
 } satisfies Record<string, unknown>);
 
+/** #1364 review follow-up: empty stats alone are not the empty BASELINE —
+ *  with default settings (`showDetails: false`) the first render is the
+ *  summary-only Alert and the EmptyState never mounts. Reuse the details-on
+ *  requests-tab settings so the story opens on the actual empty state. */
 const withUsageEmptyBridge = withScopedMakaBridge({
   ...makaBridge,
   settings: {
     ...makaBridge.settings,
+    get: async () => usagePopulatedSettings,
+    update: async (
+      patch: Parameters<typeof window.maka.settings.update>[0],
+    ): Promise<UpdateAppSettingsResult> => ({
+      settings: mergeSettings(usagePopulatedSettings, patch),
+    }),
     usageStats: async (): Promise<UsageStats> => emptyUsageStats,
   },
 } satisfies Record<string, unknown>);
@@ -1096,6 +1106,7 @@ export const WebSearchResults: Story = {
     );
   },
 };
+// Real path: 设置 → 语音.
 export const Voice: Story = {
   decorators: [withSettingsBridge],
   render: () => <SettingsStory section="voice" />,

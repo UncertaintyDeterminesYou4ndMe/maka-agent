@@ -318,6 +318,60 @@ test('usage and web search stay contained at the window floor', async ({ window:
   ).toBe(true);
 });
 
+/**
+ * #1364 review follow-up: the containment test above never reaches the two
+ * long-content branches — the default fixture has no request logs (so the
+ * requests DataTable never renders) and no Tavily key (so the page stops at
+ * the no-key message). These two lock the actual fixes against the states
+ * that broke: the request table scrolls inside its own container while the
+ * page stays put, and the hostile-width results (bare-URL title, long
+ * snippet) wrap inside their cards.
+ */
+test('usage request log scrolls inside its own container at the window floor', async ({
+  usageSettingsWindow: page,
+}) => {
+  await page.setViewportSize({ width: 480, height: 900 });
+  const settings = page.getByRole('main', { name: '设置内容' });
+  const scroller = settings.locator('.settingsUsageTable');
+  // The renderer's first stats fetch can race the fixture seeding on boot;
+  // refresh until the seeded request log lands.
+  await expect(async () => {
+    await settings.getByRole('button', { name: '刷新使用统计' }).click();
+    await expect(scroller).toBeVisible({ timeout: 1_000 });
+  }).toPass();
+  await expect(scroller).toHaveCSS('overflow-x', 'auto');
+  // The seeded log's nowrap columns are intrinsically wider than the floor
+  // column, so the scroller must actually be scrolling its table…
+  await expect.poll(
+    () => scroller.evaluate((element) => element.scrollWidth > element.clientWidth + 1),
+  ).toBe(true);
+  // …while the page around it stays contained.
+  await expect.poll(
+    () => settings.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+});
+
+test('web search results wrap inside their cards at the window floor', async ({
+  searchSettingsWindow: page,
+}) => {
+  await page.setViewportSize({ width: 480, height: 900 });
+  const settings = page.getByRole('main', { name: '设置内容' });
+  await settings.getByLabel('联网搜索真实查询').fill('electron vibrancy 排查');
+  await settings.getByRole('button', { name: '搜索', exact: true }).click();
+
+  const results = settings.locator('.settingsWebSearchResult');
+  await expect(results).toHaveCount(3);
+  await expect.poll(
+    () =>
+      results.evaluateAll((elements) =>
+        elements.every((element) => element.scrollWidth <= element.clientWidth),
+      ),
+  ).toBe(true);
+  await expect.poll(
+    () => settings.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+});
+
 test('usage keeps one summary track per metric when wide', async ({ window: page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const settings = await openSettings(page);
