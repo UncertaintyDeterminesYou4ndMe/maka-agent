@@ -132,7 +132,8 @@
   margin-top: var(--space-2-5);
 }
 
-.settingsConfigStrategy > .settingsHelpText {
-  white-space: nowrap;
-}
+/* #1363 review: no nowrap on the strategy label — the English copy
+   ("Connections with the same name:") is wider than the 480px floor's
+   content column and dragged the section into clipped overflow. On wide
+   layouts the label fits one line either way. */
 

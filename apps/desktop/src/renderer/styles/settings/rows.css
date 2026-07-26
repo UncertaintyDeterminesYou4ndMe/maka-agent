@@ -99,6 +99,21 @@
   min-width: 0;
 }
 
+/* #1363 review: a row whose control side is more than a bare switch (e.g.
+   Memory's status Chip + switch) groups them into one cluster, so the
+   stacked layout keeps them on one line together. The internal gap matches
+   the row gap, so the wide layout is pixel-identical to the former loose
+   siblings. */
+.settingsFormRowControlCluster {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  /* No min-width:0 here — the cluster's floor is its widest nowrap chip;
+     shrinking below that bleeds the chip out of the box. The LABEL side
+     owns the squeeze (it has min-width:0 and wraps). */
+}
+
 /* Detail audit round 3: vertical variant for full-width controls (the
    personalization tone textarea) living inside the shared card rows. */
 .settingsFormRow[data-orient="vertical"] {
@@ -349,7 +364,13 @@
     row-gap: var(--space-2-5);
   }
 
-  .settingsRow:has(> [role="switch"]) {
+  /* #1363 review: the exception applies only when the switch is the row's
+     ONLY control (label + switch, nothing else). A three-part row — e.g.
+     Memory's label + status Chip + switch — held horizontal would crush
+     the label to a char-per-line sliver, so it stacks like any other row.
+     `:not(input)` spares Base UI Switch's hidden sibling checkbox, which
+     is a real third child on every switch row. */
+  .settingsRow:has(> [role="switch"]):not(:has(> :nth-child(3):not(input))) {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
@@ -371,7 +392,7 @@
     gap: var(--space-2-5);
   }
 
-  .settingsFormRow:has(> [role="switch"]) {
+  .settingsFormRow:has(> [role="switch"]):not(:has(> :nth-child(3):not(input))) {
     flex-direction: row;
     align-items: center;
     gap: var(--space-5);
