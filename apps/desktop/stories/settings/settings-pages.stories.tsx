@@ -603,6 +603,11 @@ const makaBridge = {
       electronVersion: '33.2.0',
       nodeVersion: '20.18.0',
       chromeVersion: '130.0.6723.59',
+      // #1363: was missing entirely — the About and Data pages' 工作区路径
+      // rows rendered an EMPTY value in every story. Deliberately long and
+      // deep so the mono value exercises its wrap contract.
+      workspacePath:
+        '/Users/storybook-fixture-user/Library/Application Support/Maka/workspaces/infra-observability-platform-desktop',
     }),
     openPath: async () => ({ ok: true as const, opened: '/Users/storybook' }),
   },

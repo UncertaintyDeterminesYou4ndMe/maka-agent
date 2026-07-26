@@ -650,3 +650,42 @@ test('appearance palette names stay fully visible at the window floor', async ({
     () => settings.evaluate((element) => element.scrollWidth <= element.clientWidth),
   ).toBe(true);
 });
+
+/**
+ * #1363 — the three small form-row pages at the window floor. Daily Review
+ * and About are covered by the #1362 row-stacking mechanism; the Data page
+ * adds two page-owned surfaces: the config strategy row (nowrap label +
+ * select, one-line minimum wider than the floor column) now wraps, and the
+ * workspace path renders as a wrapping mono value.
+ */
+test('data, about, and daily review stay contained at the window floor', async ({
+  window: page,
+}) => {
+  await page.setViewportSize({ width: 480, height: 900 });
+  const settings = await openSettings(page);
+
+  await settings.getByRole('button', { name: '数据', exact: true }).click();
+  const strategy = settings.locator('.settingsConfigStrategy');
+  await expect(strategy).toBeVisible();
+  await expect(strategy).toHaveCSS('flex-wrap', 'wrap');
+  const workspaceValue = settings.locator('.settingsRow span[data-mono="true"]').first();
+  await expect(workspaceValue).toBeVisible();
+  await expect.poll(
+    () => workspaceValue.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+  await expect.poll(
+    () => settings.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+
+  await settings.getByRole('button', { name: '关于', exact: true }).click();
+  await expect(settings.locator('.settingsAboutPage')).toBeVisible();
+  await expect.poll(
+    () => settings.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+
+  await settings.getByRole('button', { name: '每日回顾', exact: true }).click();
+  await expect(settings.locator('.settingsFeatureStatusPage')).toBeVisible();
+  await expect.poll(
+    () => settings.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+});
