@@ -65,6 +65,22 @@ test('the same read counts once the rule class has a consumer', () => {
   assert.equal(resolveLiveTokens(new Set(), analysis).has('--w-rail'), true);
 });
 
+// A comma group applies when any branch matches, so one live branch must
+// keep the whole rule's reads alive — and all-dead branches must not.
+test('a comma group with one live branch keeps its token reads', () => {
+  const sheet = '.maka-dead, .maka-live { width: var(--w-shared); }';
+  const live = (isLive) =>
+    resolveLiveTokens(new Set(), analyzeTokenSheet(sheet, isLive)).has('--w-shared');
+  assert.equal(
+    live((cls) => cls === 'maka-live'),
+    true,
+  );
+  assert.equal(
+    live(() => false),
+    false,
+  );
+});
+
 test('token-to-token derivation keeps a base token alive only via a live head', () => {
   const sheet = ':root { --derived: var(--base); --base: 4px; }';
   const analysis = analyzeTokenSheet(sheet, () => false);
@@ -77,6 +93,34 @@ test('derivation chains resolve transitively', () => {
   const analysis = analyzeTokenSheet(sheet, () => false);
   const live = resolveLiveTokens(new Set(['--a']), analysis);
   assert.equal(live.has('--c'), true);
+});
+
+test('a self-referencing token does not loop and does not revive itself', () => {
+  const sheet = ':root { --a: var(--a, 4px); }';
+  const analysis = analyzeTokenSheet(sheet, () => false);
+  assert.equal(resolveLiveTokens(new Set(), analysis).has('--a'), false);
+  assert.equal(resolveLiveTokens(new Set(['--a']), analysis).has('--a'), true);
+});
+
+test('a derivation cycle terminates and lives or dies as one unit', () => {
+  const sheet = ':root { --a: var(--b); --b: var(--a); }';
+  const analysis = analyzeTokenSheet(sheet, () => false);
+  const dead = resolveLiveTokens(new Set(), analysis);
+  assert.equal(dead.has('--a'), false);
+  assert.equal(dead.has('--b'), false);
+  const live = resolveLiveTokens(new Set(['--a']), analysis);
+  assert.equal(live.has('--a'), true);
+  assert.equal(live.has('--b'), true);
+});
+
+test('a diamond of derivations resolves every path to the shared base', () => {
+  const sheet =
+    ':root { --top: var(--left) var(--right); --left: var(--base); --right: var(--base); --base: 1px; }';
+  const analysis = analyzeTokenSheet(sheet, () => false);
+  const live = resolveLiveTokens(new Set(['--top']), analysis);
+  for (const token of ['--left', '--right', '--base']) {
+    assert.equal(live.has(token), true, `${token} should be live via the diamond`);
+  }
 });
 
 test('reads in rules without class selectors always count', () => {

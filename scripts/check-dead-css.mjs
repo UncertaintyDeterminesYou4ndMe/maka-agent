@@ -3,9 +3,10 @@
  * check-dead-css — detect CSS classes and design tokens with zero consumers.
  *
  * Classes: parses all .css files under apps/desktop/src/renderer/styles/
- * (including the settings/ sub-directory) plus maka-tokens.css for class
- * selectors, then searches the renderer and packages/ui/src source for
- * consumers. A consumer is an exact class-name match: `maka-shell` in source
+ * (including the settings/ sub-directory) plus maka-tokens.css and
+ * packages/ui/src/styles.css (the component-library sheet imported into the
+ * product CSS) for class selectors, then searches the renderer and
+ * packages/ui/src source for consumers. A consumer is an exact class-name match: `maka-shell` in source
  * does not keep `.maka-shell-rail` alive, and `maka-shell-rail` does not keep
  * `.maka-shell` alive (#1980).
  *
@@ -56,6 +57,11 @@ const EXTRA_TOKEN_CONSUMER_FILES = [
   resolve(REPO_ROOT, 'node_modules', '@astryxdesign', 'core', 'dist', 'theme', 'tokens.stylex.js'),
 ];
 const TOKEN_FILE = resolve(RENDERER_ROOT, 'maka-tokens.css');
+/** The component-library sheet — imported into the product CSS, so its
+ * classes are product classes and join the dead-class scan. Deliberately not
+ * the whole of packages/ui/src: the only other stylesheets there would be
+ * generated ones, which own no hand-written product classes. */
+const UI_STYLE_FILE = resolve(REPO_ROOT, 'packages', 'ui', 'src', 'styles.css');
 const SOURCE_ROOTS = [
   resolve(REPO_ROOT, 'apps', 'desktop', 'src', 'renderer'),
   resolve(REPO_ROOT, 'packages', 'ui', 'src'),
@@ -133,6 +139,12 @@ const DYNAMIC_STYLE_HOOKS = new Set([
   'settingsPaletteSwatch-dusk',
   'settingsPaletteSwatch-sand',
   'settingsPaletteSwatch-mono',
+  // Markdown code-block density variants — composed at runtime via
+  // `maka-markdown-code-${props.density}` in markdown-body.tsx and
+  // mermaid-diagram.tsx, so the per-density names never appear as string
+  // literals. Keep in sync with the density prop's values.
+  'maka-markdown-code-default',
+  'maka-markdown-code-compact',
 ]);
 
 /**
@@ -158,10 +170,10 @@ const RESERVED_SCALE_TOKENS = new Set([
   // Zero rung of the spacing ruler.
   '--space-0',
   // Easing vocabulary (see the motion governance comment in maka-tokens.css):
-  // --ease-out-strong for feedback, --ease-in-out-strong for on-screen
-  // movement, --ease-linear for shimmer sweeps. The movement curve lost its
-  // last consumer with the dead shell recipes (#1980), but deleting the named
-  // curve is what invites the next bare cubic-bezier.
+  // --ease-out-strong for feedback/state changes, --ease-in-out-strong for
+  // on-screen movement. The movement curve lost its last consumer with the
+  // dead shell recipes (#1980), but deleting the named curve is what invites
+  // the next bare cubic-bezier.
   '--ease-in-out-strong',
 ]);
 
@@ -279,7 +291,11 @@ export function analyzeTokenSheet(css, isClassLive) {
   const derivations = new Map();
   const liveReads = new Set();
   for (const rule of parseLeafRules(css)) {
-    const ruleLive = [...collectClassSelectors(rule.selector)].every(isClassLive);
+    // A comma group applies when ANY branch matches, and a branch matches
+    // only when ALL of its classes exist somewhere.
+    const ruleLive = rule.selector
+      .split(',')
+      .some((branch) => [...collectClassSelectors(branch)].every(isClassLive));
     if (!ruleLive) continue;
     for (const declaration of rule.body.split(';')) {
       const definition = declaration.match(/^\s*(--[a-z0-9-]+)\s*:/);
@@ -321,7 +337,7 @@ async function main() {
   // Collect all CSS class selectors. The token sheet owns product classes
   // too (shell recipes historically hid there — #1980), so it joins the scan.
   const cssFiles = await readCssFiles(STYLES_DIR);
-  for (const file of [...EXTRA_STYLE_FILES, TOKEN_FILE]) {
+  for (const file of [...EXTRA_STYLE_FILES, TOKEN_FILE, UI_STYLE_FILE]) {
     cssFiles.push(file);
   }
   const allClasses = new Set();
