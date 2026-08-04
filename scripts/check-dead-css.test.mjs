@@ -28,10 +28,11 @@ test('class selectors are collected from compact and nested rules', () => {
     @media (min-width: 600px) { .maka-sidebar:hover, .maka-titlebar strong { color: red; } }
     /* .maka-commented { } */
   `;
-  assert.deepEqual(
-    [...collectClassSelectors(css)].sort(),
-    ['maka-shell', 'maka-sidebar', 'maka-titlebar'],
-  );
+  assert.deepEqual([...collectClassSelectors(css)].sort(), [
+    'maka-shell',
+    'maka-sidebar',
+    'maka-titlebar',
+  ]);
 });
 
 test('parseLeafRules flattens at-rule wrappers to selector/body pairs', () => {
