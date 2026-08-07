@@ -144,11 +144,7 @@ async function waitForRecord(
     const records = await readRecords(logPath);
     if (records.some(predicate)) return;
     if (Date.now() - startedAt >= deadlineMs) {
-      assert.ok(
-        records.some(predicate),
-        `${what} (log after ${deadlineMs}ms: ${JSON.stringify(records)})`,
-      );
-      return;
+      assert.fail(`${what} (log after ${deadlineMs}ms: ${JSON.stringify(records)})`);
     }
     await delay(10);
   }
@@ -318,6 +314,13 @@ describe('maka-cu supervisor: cancelling a delivered request (§7.2/§7.3)', () 
     const controller = new AbortController();
     const started = Date.now();
     const call = service.call('observe', {}, controller.signal);
+    // Settled later by assert.rejects; without this, a barrier failure below
+    // would leave it an unhandled rejection.
+    void call.catch(() => {});
+    // The ordering claim holds because ensureStarted has already settled: both
+    // calls then take the same synchronous write path onto one ordered pipe,
+    // and the mock processes stdin lines in order. The same invariant carries
+    // every barrier in this suite.
     const barrier = await service.call('window.list', {});
     assert.equal(barrier.ok, true, 'the later round trip proves observe reached the executor');
     controller.abort();
@@ -346,6 +349,7 @@ describe('maka-cu supervisor: cancelling a delivered request (§7.2/§7.3)', () 
     await service.ensureStarted();
     const controller = new AbortController();
     const call = service.call('observe', {}, controller.signal);
+    void call.catch(() => {});
     const barrier = await service.call('window.list', {});
     assert.equal(barrier.ok, true, 'the later round trip proves observe reached the executor');
     controller.abort();
@@ -383,6 +387,7 @@ describe('maka-cu supervisor: cancelling a delivered request (§7.2/§7.3)', () 
     await service.ensureStarted();
     const generation = service.snapshot().generation;
     const call = service.withSession('session-a', () => service.call('observe', {}));
+    void call.catch(() => {});
     const barrier = await service.call('window.list', {});
     assert.equal(barrier.ok, true, 'the later round trip proves observe reached the executor');
     service.clearSession('session-a');
