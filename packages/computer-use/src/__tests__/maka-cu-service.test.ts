@@ -127,6 +127,33 @@ async function readRecords(logPath: string): Promise<Array<Record<string, unknow
   }
 }
 
+// The mock appends to its log from another process, so a single read races its
+// scheduler: a caller settled by the host's grace timer can observe the log a
+// few milliseconds before the child's `appendFileSync` lands (even a SIGKILLed
+// child gets a last slice). Poll with a bounded deadline — a real regression
+// (no `$/cancel` ever written) still fails, just without depending on which
+// process the scheduler ran first.
+async function waitForRecord(
+  logPath: string,
+  predicate: (record: Record<string, unknown>) => boolean,
+  what: string,
+  deadlineMs = 2000,
+): Promise<void> {
+  const startedAt = Date.now();
+  for (;;) {
+    const records = await readRecords(logPath);
+    if (records.some(predicate)) return;
+    if (Date.now() - startedAt >= deadlineMs) {
+      assert.ok(
+        records.some(predicate),
+        `${what} (log after ${deadlineMs}ms: ${JSON.stringify(records)})`,
+      );
+      return;
+    }
+    await delay(10);
+  }
+}
+
 function makeService(
   opts: {
     limits?: Partial<MakaCuLimits>;
@@ -291,7 +318,8 @@ describe('maka-cu supervisor: cancelling a delivered request (§7.2/§7.3)', () 
     const controller = new AbortController();
     const started = Date.now();
     const call = service.call('observe', {}, controller.signal);
-    await delay(120);
+    const barrier = await service.call('window.list', {});
+    assert.equal(barrier.ok, true, 'the later round trip proves observe reached the executor');
     controller.abort();
     await assert.rejects(call, (error: unknown) => {
       assert.ok(isMakaCuLifecycleError(error), 'a cancelled dispatch is a lifecycle error');
@@ -299,9 +327,9 @@ describe('maka-cu supervisor: cancelling a delivered request (§7.2/§7.3)', () 
     });
     const elapsed = Date.now() - started;
     assert.ok(elapsed < 4000, `settled in ${elapsed}ms, which must be the grace not the deadline`);
-    const records = await readRecords(logPath);
-    assert.ok(
-      records.some((record) => record.kind === 'cancel'),
+    await waitForRecord(
+      logPath,
+      (record) => record.kind === 'cancel',
       'the executor must be asked to cancel',
     );
   });
@@ -318,7 +346,8 @@ describe('maka-cu supervisor: cancelling a delivered request (§7.2/§7.3)', () 
     await service.ensureStarted();
     const controller = new AbortController();
     const call = service.call('observe', {}, controller.signal);
-    await delay(80);
+    const barrier = await service.call('window.list', {});
+    assert.equal(barrier.ok, true, 'the later round trip proves observe reached the executor');
     controller.abort();
     const envelope = await call;
     assert.equal(envelope.ok, false);
@@ -336,9 +365,9 @@ describe('maka-cu supervisor: cancelling a delivered request (§7.2/§7.3)', () 
     const { service, logPath } = makeService({ silent: ['observe'], timeoutMs: 300 });
     await service.ensureStarted();
     await assert.rejects(service.call('observe', {}));
-    const records = await readRecords(logPath);
-    assert.ok(
-      records.some((record) => record.kind === 'cancel'),
+    await waitForRecord(
+      logPath,
+      (record) => record.kind === 'cancel',
       'the deadline must ask the executor to cancel before tearing it down',
     );
   });
