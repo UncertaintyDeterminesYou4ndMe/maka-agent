@@ -784,7 +784,10 @@ describe('non-serving Runtime Host kernel', () => {
           }),
         }),
       );
-      const connected = await retryConnect(paths, CURRENT_PROTOCOL);
+      // Injected liveness cadence: the admitted request below must stay
+      // pending across probe cycles measured in this unit, not the real 2s one.
+      const livenessIntervalMs = 100;
+      const connected = await retryConnect(paths, CURRENT_PROTOCOL, 'tui', { livenessIntervalMs });
       assert.equal(connected.kind, 'connected');
       if (connected.kind !== 'connected') return;
 
@@ -808,7 +811,10 @@ describe('non-serving Runtime Host kernel', () => {
           { sessionId: 'unrelated-session', goal: null },
         );
 
-        await sleep(2_100);
+        // Hold the admitted request pending across at least two injected
+        // liveness probe cycles: surviving them proves probes never retire a
+        // request that has no explicit deadline (#2392).
+        await sleep(livenessIntervalMs * 2 + 50);
         releaseAdmitted();
         assert.deepEqual(await admitted, { kind: 'rejected', reason: 'invalid_state' });
         assert.deepEqual(await laneWaiter, { sessionId: 'blocked-session', goal: null });
@@ -1773,17 +1779,25 @@ async function retryConnect(
   paths: HostPaths,
   protocol: { min: number; max: number },
   surface: ClientSurface = 'tui',
+  options?: { livenessIntervalMs?: number },
 ) {
   const deadline = Date.now() + 5_000;
   let result = await connectRuntimeHost({
     ...paths,
+    ...options,
     rootPath: paths.root,
     surface,
     protocol,
   });
   while (result.kind !== 'connected' && Date.now() < deadline) {
     await sleep(20);
-    result = await connectRuntimeHost({ ...paths, rootPath: paths.root, surface, protocol });
+    result = await connectRuntimeHost({
+      ...paths,
+      ...options,
+      rootPath: paths.root,
+      surface,
+      protocol,
+    });
   }
   return result;
 }

@@ -84,6 +84,12 @@ export interface ConnectRuntimeHostInput {
   clientInstanceId?: string;
   connectTimeoutMs?: number;
   handshakeTimeoutMs?: number;
+  /**
+   * Interval between liveness probes while a domain request is outstanding.
+   * Injectable so tests exercise requests that outlive a probe cycle without
+   * waiting the real cadence; defaults to DEFAULT_LIVENESS_INTERVAL_MS (2s).
+   */
+  livenessIntervalMs?: number;
 }
 
 export type RuntimeHostUnavailableReason =
@@ -234,6 +240,7 @@ class RuntimeHostConnectionImpl implements RuntimeHostConnection {
   #livenessTimer: NodeJS.Timeout | undefined;
   #livenessProbePending = false;
   #terminalError: Error | undefined;
+  readonly #livenessIntervalMs: number;
 
   constructor(
     transport: FramedTransport,
@@ -242,7 +249,12 @@ class RuntimeHostConnectionImpl implements RuntimeHostConnection {
       connectionId: string;
       selectedProtocol: number;
     },
+    options?: { livenessIntervalMs?: number },
   ) {
+    this.#livenessIntervalMs = requireTimeout(
+      options?.livenessIntervalMs ?? DEFAULT_LIVENESS_INTERVAL_MS,
+      'livenessIntervalMs',
+    );
     this.#transport = transport;
     this.hostEpoch = accepted.hostEpoch;
     this.connectionId = accepted.connectionId;
@@ -592,7 +604,7 @@ class RuntimeHostConnectionImpl implements RuntimeHostConnection {
     this.#livenessTimer = setTimeout(() => {
       this.#livenessTimer = undefined;
       this.#startLivenessProbe();
-    }, DEFAULT_LIVENESS_INTERVAL_MS);
+    }, this.#livenessIntervalMs);
   }
 
   #hasOutstandingDomainRequest(): boolean {
@@ -906,7 +918,9 @@ export async function connectResolvedRuntimeHost(
       return {
         kind: 'connected',
         registration,
-        connection: new RuntimeHostConnectionImpl(transport, handshake),
+        connection: new RuntimeHostConnectionImpl(transport, handshake, {
+          livenessIntervalMs: input.livenessIntervalMs,
+        }),
       };
     }
     transport.destroy();

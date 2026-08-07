@@ -26,6 +26,9 @@ import { SessionContinuityCoordinator } from '../server/session-continuity-coord
 
 const ROOT_SESSION_ID = 'root-1';
 const GRAPH_ID = agentGraphIdForRootSession(ROOT_SESSION_ID);
+// Injected client liveness cadence: the fake authority's slow stop() holds a
+// request past probe cycles measured in this unit instead of the real 2s one.
+const LIVENESS_INTERVAL_MS = 100;
 const PROTOCOL = {
   min: RUNTIME_HOST_PROTOCOL_VERSION,
   max: RUNTIME_HOST_PROTOCOL_VERSION,
@@ -151,7 +154,10 @@ class FakeAgentGraphAuthority implements GraphAuthority {
   }
 
   async stop(): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, 2_100));
+    // Outlive at least two injected liveness probe cycles so the pending
+    // agent.graph.stop request proves it survives probing instead of being
+    // retired by an implicit deadline (#2392).
+    await new Promise((resolve) => setTimeout(resolve, LIVENESS_INTERVAL_MS * 2 + 50));
     this.stopCount += 1;
     this.#snapshot.status = 'stopped';
     for (const listener of this.#listeners) {
@@ -174,7 +180,12 @@ async function connect(
   rootPath: string,
   surface: 'desktop' | 'tui',
 ): Promise<RuntimeHostConnection> {
-  const result = await connectRuntimeHost({ rootPath, surface, protocol: PROTOCOL });
+  const result = await connectRuntimeHost({
+    rootPath,
+    surface,
+    protocol: PROTOCOL,
+    livenessIntervalMs: LIVENESS_INTERVAL_MS,
+  });
   assert.equal(result.kind, 'connected');
   if (result.kind !== 'connected') throw new Error('Runtime Host did not accept the Client');
   return result.connection;
