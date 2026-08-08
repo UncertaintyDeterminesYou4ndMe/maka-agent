@@ -90,6 +90,12 @@ export interface ConnectRuntimeHostInput {
    * waiting the real cadence; defaults to DEFAULT_LIVENESS_INTERVAL_MS (2s).
    */
   livenessIntervalMs?: number;
+  /**
+   * Invoked after each liveness probe round-trips and validates its Host
+   * Epoch. Test observability: lets a probe-crossing test prove probes
+   * actually fired inside its window instead of assuming the cadence took.
+   */
+  onLivenessProbe?: () => void;
 }
 
 export type RuntimeHostUnavailableReason =
@@ -241,6 +247,7 @@ class RuntimeHostConnectionImpl implements RuntimeHostConnection {
   #livenessProbePending = false;
   #terminalError: Error | undefined;
   readonly #livenessIntervalMs: number;
+  readonly #onLivenessProbe: (() => void) | undefined;
 
   constructor(
     transport: FramedTransport,
@@ -249,12 +256,12 @@ class RuntimeHostConnectionImpl implements RuntimeHostConnection {
       connectionId: string;
       selectedProtocol: number;
     },
-    options?: { livenessIntervalMs?: number },
+    // livenessIntervalMs is validated by connectResolvedRuntimeHost alongside
+    // the other connect timeouts, before any transport work happens.
+    options?: { livenessIntervalMs?: number; onLivenessProbe?: () => void },
   ) {
-    this.#livenessIntervalMs = requireTimeout(
-      options?.livenessIntervalMs ?? DEFAULT_LIVENESS_INTERVAL_MS,
-      'livenessIntervalMs',
-    );
+    this.#livenessIntervalMs = options?.livenessIntervalMs ?? DEFAULT_LIVENESS_INTERVAL_MS;
+    this.#onLivenessProbe = options?.onLivenessProbe;
     this.#transport = transport;
     this.hostEpoch = accepted.hostEpoch;
     this.connectionId = accepted.connectionId;
@@ -628,6 +635,7 @@ class RuntimeHostConnectionImpl implements RuntimeHostConnection {
         if (status.hostEpoch !== this.hostEpoch) {
           throw new Error('Runtime Host returned status for a different Host Epoch');
         }
+        this.#onLivenessProbe?.();
       },
       'connection',
     )
@@ -810,6 +818,10 @@ export async function connectResolvedRuntimeHost(
     input.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS,
     'handshakeTimeoutMs',
   );
+  const livenessIntervalMs = requireTimeout(
+    input.livenessIntervalMs ?? DEFAULT_LIVENESS_INTERVAL_MS,
+    'livenessIntervalMs',
+  );
   let registration: HostRegistration | undefined;
   try {
     registration = await readRegistrationBeforeDeadline(
@@ -919,7 +931,8 @@ export async function connectResolvedRuntimeHost(
         kind: 'connected',
         registration,
         connection: new RuntimeHostConnectionImpl(transport, handshake, {
-          livenessIntervalMs: input.livenessIntervalMs,
+          livenessIntervalMs,
+          onLivenessProbe: input.onLivenessProbe,
         }),
       };
     }

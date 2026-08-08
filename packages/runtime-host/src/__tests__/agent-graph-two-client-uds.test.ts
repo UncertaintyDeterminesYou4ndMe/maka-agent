@@ -75,12 +75,26 @@ test('two UDS Clients query and control one Agent graph through Session invalida
       };
     },
   });
+  // Two probe round-trips observed while the stop request is pending resolve
+  // the fake's stopGate. Probes only run while a domain request is
+  // outstanding, and the gated stop is the only long-lived one, so the count
+  // cannot be satisfied by the short-lived queries above it.
+  let livenessProbes = 0;
+  let markProbesCrossed!: () => void;
+  const probeWindowCrossed = new Promise<void>((resolve) => {
+    markProbesCrossed = resolve;
+  });
+  const onLivenessProbe = () => {
+    livenessProbes += 1;
+    if (livenessProbes >= 2) markProbesCrossed();
+  };
+  authority.stopGate = probeWindowCrossed;
   let desktop: RuntimeHostConnection | undefined;
   let tui: RuntimeHostConnection | undefined;
   let subscription: RuntimeHostSessionSubscription | undefined;
   try {
-    desktop = await connect(root, 'desktop');
-    tui = await connect(root, 'tui');
+    desktop = await connect(root, 'desktop', onLivenessProbe);
+    tui = await connect(root, 'tui', onLivenessProbe);
     subscription = await desktop.openSessionSubscription({ sessionId: ROOT_SESSION_ID });
 
     const [desktopSnapshot, tuiSnapshot] = await Promise.all([
@@ -104,7 +118,7 @@ test('two UDS Clients query and control one Agent graph through Session invalida
       'active',
     );
 
-    tui = await connect(root, 'tui');
+    tui = await connect(root, 'tui', onLivenessProbe);
     const stopped = await tui.request('agent.graph.stop', { rootSessionId: ROOT_SESSION_ID });
     assert.deepEqual(stopped, { rootSessionId: ROOT_SESSION_ID, graphId: GRAPH_ID });
     assert.equal(authority.stopCount, 1);
@@ -153,11 +167,13 @@ class FakeAgentGraphAuthority implements GraphAuthority {
     return inspection(this.#snapshot);
   }
 
+  /** Resolved by the test once two client liveness probes have observably
+   *  round-tripped, so the pending agent.graph.stop request provably crosses
+   *  probe cycles — causal ordering, no fixed timing at all. */
+  stopGate: Promise<void> = Promise.resolve();
+
   async stop(): Promise<void> {
-    // Outlive at least two injected liveness probe cycles so the pending
-    // agent.graph.stop request proves it survives probing instead of being
-    // retired by an implicit deadline (#2392).
-    await new Promise((resolve) => setTimeout(resolve, LIVENESS_INTERVAL_MS * 2 + 50));
+    await this.stopGate;
     this.stopCount += 1;
     this.#snapshot.status = 'stopped';
     for (const listener of this.#listeners) {
@@ -179,12 +195,14 @@ class FakeAgentGraphAuthority implements GraphAuthority {
 async function connect(
   rootPath: string,
   surface: 'desktop' | 'tui',
+  onLivenessProbe?: () => void,
 ): Promise<RuntimeHostConnection> {
   const result = await connectRuntimeHost({
     rootPath,
     surface,
     protocol: PROTOCOL,
     livenessIntervalMs: LIVENESS_INTERVAL_MS,
+    onLivenessProbe,
   });
   assert.equal(result.kind, 'connected');
   if (result.kind !== 'connected') throw new Error('Runtime Host did not accept the Client');

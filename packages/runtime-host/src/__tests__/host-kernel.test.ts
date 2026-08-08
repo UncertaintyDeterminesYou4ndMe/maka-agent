@@ -785,9 +785,23 @@ describe('non-serving Runtime Host kernel', () => {
         }),
       );
       // Injected liveness cadence: the admitted request below must stay
-      // pending across probe cycles measured in this unit, not the real 2s one.
+      // pending across probe cycles measured in this unit, not the real 2s
+      // one. The probe callback makes the premise a fact rather than an
+      // assumption: if the injected cadence ever stopped taking effect, the
+      // crossing below would time out instead of vacuously passing.
       const livenessIntervalMs = 100;
-      const connected = await retryConnect(paths, CURRENT_PROTOCOL, 'tui', { livenessIntervalMs });
+      let livenessProbes = 0;
+      let markProbesCrossed!: () => void;
+      const probeWindowCrossed = new Promise<void>((resolve) => {
+        markProbesCrossed = resolve;
+      });
+      const connected = await retryConnect(paths, CURRENT_PROTOCOL, 'tui', {
+        livenessIntervalMs,
+        onLivenessProbe: () => {
+          livenessProbes += 1;
+          if (livenessProbes >= 2) markProbesCrossed();
+        },
+      });
       assert.equal(connected.kind, 'connected');
       if (connected.kind !== 'connected') return;
 
@@ -811,10 +825,14 @@ describe('non-serving Runtime Host kernel', () => {
           { sessionId: 'unrelated-session', goal: null },
         );
 
-        // Hold the admitted request pending across at least two injected
-        // liveness probe cycles: surviving them proves probes never retire a
-        // request that has no explicit deadline (#2392).
-        await sleep(livenessIntervalMs * 2 + 50);
+        // Hold the admitted request pending until two liveness probes have
+        // observably round-tripped: surviving them proves probes never retire
+        // a request that has no explicit deadline (#2392).
+        await withTimeout(
+          probeWindowCrossed,
+          5_000,
+          'liveness probes did not fire on the injected cadence',
+        );
         releaseAdmitted();
         assert.deepEqual(await admitted, { kind: 'rejected', reason: 'invalid_state' });
         assert.deepEqual(await laneWaiter, { sessionId: 'blocked-session', goal: null });
@@ -1779,7 +1797,7 @@ async function retryConnect(
   paths: HostPaths,
   protocol: { min: number; max: number },
   surface: ClientSurface = 'tui',
-  options?: { livenessIntervalMs?: number },
+  options?: { livenessIntervalMs?: number; onLivenessProbe?: () => void },
 ) {
   const deadline = Date.now() + 5_000;
   let result = await connectRuntimeHost({
