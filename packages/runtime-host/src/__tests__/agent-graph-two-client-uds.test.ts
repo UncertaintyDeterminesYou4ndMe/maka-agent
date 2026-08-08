@@ -76,9 +76,9 @@ test('two UDS Clients query and control one Agent graph through Session invalida
     },
   });
   // Two probe round-trips observed while the stop request is pending resolve
-  // the fake's stopGate. Probes only run while a domain request is
-  // outstanding, and the gated stop is the only long-lived one, so the count
-  // cannot be satisfied by the short-lived queries above it.
+  // the fake's stopGate. The observer is wired only onto the final TUI
+  // connection that issues agent.graph.stop, so no other connection's slow
+  // query could ever satisfy the counter.
   let livenessProbes = 0;
   let markProbesCrossed!: () => void;
   const probeWindowCrossed = new Promise<void>((resolve) => {
@@ -93,8 +93,8 @@ test('two UDS Clients query and control one Agent graph through Session invalida
   let tui: RuntimeHostConnection | undefined;
   let subscription: RuntimeHostSessionSubscription | undefined;
   try {
-    desktop = await connect(root, 'desktop', onLivenessProbe);
-    tui = await connect(root, 'tui', onLivenessProbe);
+    desktop = await connect(root, 'desktop');
+    tui = await connect(root, 'tui');
     subscription = await desktop.openSessionSubscription({ sessionId: ROOT_SESSION_ID });
 
     const [desktopSnapshot, tuiSnapshot] = await Promise.all([

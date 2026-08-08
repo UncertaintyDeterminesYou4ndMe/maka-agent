@@ -94,6 +94,8 @@ export interface ConnectRuntimeHostInput {
    * Invoked after each liveness probe round-trips and validates its Host
    * Epoch. Test observability: lets a probe-crossing test prove probes
    * actually fired inside its window instead of assuming the cadence took.
+   * Diagnostics only — exceptions it throws are swallowed and never affect
+   * connection health.
    */
   onLivenessProbe?: () => void;
 }
@@ -635,7 +637,12 @@ class RuntimeHostConnectionImpl implements RuntimeHostConnection {
         if (status.hostEpoch !== this.hostEpoch) {
           throw new Error('Runtime Host returned status for a different Host Epoch');
         }
-        this.#onLivenessProbe?.();
+        try {
+          this.#onLivenessProbe?.();
+        } catch {
+          // Diagnostics hook: an observer exception must never fail the
+          // connection it is watching.
+        }
       },
       'connection',
     )
