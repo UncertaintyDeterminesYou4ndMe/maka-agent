@@ -6,7 +6,12 @@ const fixtureServer = path.resolve(
   '../../packages/mcp/dist/__fixtures__/stdio-server.js',
 );
 
-test('module navigation removes the hidden chat surface from layout and hit testing', async ({ window: page }) => {
+// Layout journey over one Extensions window: hidden-chat hit testing, the
+// compact editor, the centred-column width matrix, and description
+// truncation are all final-state layout facts over the same seeded state —
+// none of them needs its own Electron launch. The stdio lifecycle below
+// keeps its own window: it mutates server state end to end.
+test('MCP module layout: hidden chat, compact editor, centred column, and truncation', async ({ window: page }) => {
   await page.getByRole('button', { name: '展开侧边栏' }).click();
   await page.getByRole('navigation', { name: '对话列表' }).getByRole('button', { name: '扩展', exact: true }).click();
   await expect(page.getByRole('main', { name: '扩展' })).toBeVisible();
@@ -21,12 +26,47 @@ test('module navigation removes the hidden chat surface from layout and hit test
       return Boolean(target?.closest('.maka-chat-layout'));
     }),
   ).toBe(false);
-});
 
-test('MCP module page keeps one centred column without horizontal overflow', async ({ window: page }) => {
-  await page.getByRole('button', { name: '展开侧边栏' }).click();
-  await page.getByRole('navigation', { name: '对话列表' }).getByRole('button', { name: '扩展', exact: true }).click();
   await page.locator('.maka-module-hub-selector').getByRole('button', { name: 'MCP' }).click();
+  await expect(page.getByRole('toolbar', { name: 'MCP 浏览操作' })).toBeVisible();
+
+  await page.setViewportSize({ width: 1164, height: 700 });
+
+  const slackRow = page.locator('[data-maka-contract="mcp-market-row"]').filter({ hasText: 'Slack' });
+  await slackRow.getByRole('button', { name: '安装 Slack' }).click();
+  await slackRow.getByRole('button', { name: '管理' }).click();
+
+  const editor = page.getByRole('dialog', { name: '编辑 slack' });
+  await expect(editor).toBeVisible();
+  await expect.poll(() => editor.evaluate((element) => (
+    element.getAnimations().every((animation) => animation.playState === 'finished')
+  ))).toBe(true);
+  const overflow = await editor.evaluate((dialog) => {
+    const fields = dialog.querySelector<HTMLElement>('.maka-mcp-form-fields');
+    if (!fields) throw new Error('Expected MCP editor fields');
+    return {
+      dialog: dialog.scrollHeight - dialog.clientHeight,
+      fields: fields.scrollHeight - fields.clientHeight,
+    };
+  });
+
+  expect(overflow.dialog, JSON.stringify(overflow)).toBeLessThanOrEqual(1);
+  expect(overflow.fields, JSON.stringify(overflow)).toBeLessThanOrEqual(1);
+
+  const selectedTransportSpacing = await editor.getByRole('radio', { name: '本地 stdio' }).evaluate((radio) => {
+    const radioWrapper = radio.parentElement;
+    const icon = radioWrapper?.nextElementSibling;
+    if (!(radioWrapper instanceof HTMLElement) || !(icon instanceof SVGElement)) {
+      throw new Error('Expected selected transport radio and icon');
+    }
+    return icon.getBoundingClientRect().left - radioWrapper.getBoundingClientRect().right;
+  });
+  expect(selectedTransportSpacing).toBeGreaterThanOrEqual(4);
+
+  // Leave the editor before the width matrices below.
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: '编辑 slack' })).toBeHidden();
+
   await expect(page.getByRole('toolbar', { name: 'MCP 浏览操作' })).toBeVisible();
 
   for (const width of [1440, 1280, 861, 860, 761]) {
@@ -63,12 +103,7 @@ test('MCP module page keeps one centred column without horizontal overflow', asy
     expect(geometry.rowsWidth, `${width}px: ${JSON.stringify(geometry)}`).toBeLessThanOrEqual(900);
     expect(geometry.centerDelta, `${width}px: ${JSON.stringify(geometry)}`).toBeLessThanOrEqual(1);
   }
-});
 
-test('MCP server descriptions truncate with an ellipsis at 700px and 500px', async ({ window: page }) => {
-  await page.getByRole('button', { name: '展开侧边栏' }).click();
-  await page.getByRole('navigation', { name: '对话列表' }).getByRole('button', { name: '扩展', exact: true }).click();
-  await page.locator('.maka-module-hub-selector').getByRole('button', { name: 'MCP' }).click();
 
   const endpoint = `https://example.com/${'narrow-description-segment/'.repeat(12)}mcp`;
   await page.evaluate(async (url) => {
@@ -115,44 +150,6 @@ test('MCP server descriptions truncate with an ellipsis at 700px and 500px', asy
     expect(geometry.contentTextOverflow).toBe('ellipsis');
     expect(geometry.contentWhiteSpace).toBe('nowrap');
   }
-});
-
-test('credentialed MCP editor fits a compact desktop viewport without incidental scrolling', async ({ window: page }) => {
-  await page.setViewportSize({ width: 1164, height: 700 });
-  await page.getByRole('button', { name: '展开侧边栏' }).click();
-  await page.getByRole('navigation', { name: '对话列表' }).getByRole('button', { name: '扩展', exact: true }).click();
-  await page.locator('.maka-module-hub-selector').getByRole('button', { name: 'MCP' }).click();
-
-  const slackRow = page.locator('[data-maka-contract="mcp-market-row"]').filter({ hasText: 'Slack' });
-  await slackRow.getByRole('button', { name: '安装 Slack' }).click();
-  await slackRow.getByRole('button', { name: '管理' }).click();
-
-  const editor = page.getByRole('dialog', { name: '编辑 slack' });
-  await expect(editor).toBeVisible();
-  await expect.poll(() => editor.evaluate((element) => (
-    element.getAnimations().every((animation) => animation.playState === 'finished')
-  ))).toBe(true);
-  const overflow = await editor.evaluate((dialog) => {
-    const fields = dialog.querySelector<HTMLElement>('.maka-mcp-form-fields');
-    if (!fields) throw new Error('Expected MCP editor fields');
-    return {
-      dialog: dialog.scrollHeight - dialog.clientHeight,
-      fields: fields.scrollHeight - fields.clientHeight,
-    };
-  });
-
-  expect(overflow.dialog, JSON.stringify(overflow)).toBeLessThanOrEqual(1);
-  expect(overflow.fields, JSON.stringify(overflow)).toBeLessThanOrEqual(1);
-
-  const selectedTransportSpacing = await editor.getByRole('radio', { name: '本地 stdio' }).evaluate((radio) => {
-    const radioWrapper = radio.parentElement;
-    const icon = radioWrapper?.nextElementSibling;
-    if (!(radioWrapper instanceof HTMLElement) || !(icon instanceof SVGElement)) {
-      throw new Error('Expected selected transport radio and icon');
-    }
-    return icon.getBoundingClientRect().left - radioWrapper.getBoundingClientRect().right;
-  });
-  expect(selectedTransportSpacing).toBeGreaterThanOrEqual(4);
 });
 
 test('MCP module completes stdio add, discovery, disable, JSON import, and delete', async ({ window: page }) => {
