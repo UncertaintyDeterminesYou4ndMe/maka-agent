@@ -10,22 +10,42 @@ import { buildHarborJobConfig } from '../harbor-task-runner.js';
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Run the launcher's exported main() in process with the given
+ * MAKA_HARNESS_AB_* environment applied and restored around the call.
+ *
+ * Only pure pre-launch validation runs through here — everything that
+ * launches, locks, or journals stays on the real-subprocess route below,
+ * because a detached worker and its crash-time journal are the behavior
+ * under test there.
+ */
+async function runLauncherMainWithEnv(env: Record<string, string>): Promise<void> {
+  const { main } = (await import(
+    new URL('../../harbor/run-harness-ab.mjs', import.meta.url).href
+  )) as { main: () => Promise<void> };
+  const saved = Object.keys(env).map((key) => [key, process.env[key]] as const);
+  for (const [key, value] of Object.entries(env)) process.env[key] = value;
+  try {
+    await main();
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 test('harness A/B CLI rejects an unsupported composition before creating a run root', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'maka-harness-ab-composition-'));
   try {
     const outDir = join(dir, 'out');
-    const scriptPath = new URL('../../harbor/run-harness-ab.mjs', import.meta.url);
     await assert.rejects(
-      execFileAsync(process.execPath, [scriptPath.pathname], {
-        cwd: process.cwd(),
-        env: {
-          ...process.env,
-          MAKA_HARNESS_AB_OUT_DIR: outDir,
-          MAKA_HARNESS_AB_RUNTIME: 'zai-coding-plan-glm-5.2-max',
-          MAKA_HARNESS_AB_COMPETITOR: 'kimi-code',
-          MAKA_HARNESS_AB_TASKS_ROOT: join(dir, 'missing-tasks'),
-          MAKA_HARNESS_AB_DRY_RUN: '1',
-        },
+      runLauncherMainWithEnv({
+        MAKA_HARNESS_AB_OUT_DIR: outDir,
+        MAKA_HARNESS_AB_RUNTIME: 'zai-coding-plan-glm-5.2-max',
+        MAKA_HARNESS_AB_COMPETITOR: 'kimi-code',
+        MAKA_HARNESS_AB_TASKS_ROOT: join(dir, 'missing-tasks'),
+        MAKA_HARNESS_AB_DRY_RUN: '1',
       }),
       /unsupported harness composition/,
     );
@@ -1347,17 +1367,12 @@ test('duplicate detached launch does not overwrite the active run journal', asyn
 test('harness A/B CLI rejects the superseded 30-task pilot checkpoint', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'maka-harness-ab-cli-'));
   try {
-    const scriptPath = new URL('../../harbor/run-harness-ab.mjs', import.meta.url);
     await assert.rejects(
-      execFileAsync(process.execPath, [scriptPath.pathname], {
-        cwd: process.cwd(),
-        env: {
-          ...process.env,
-          MAKA_HARNESS_AB_OUT_DIR: join(dir, 'out'),
-          MAKA_HARNESS_AB_TASKS_ROOT: join(dir, 'missing-tasks'),
-          MAKA_HARNESS_AB_LIMIT: '30',
-          MAKA_HARNESS_AB_DRY_RUN: '1',
-        },
+      runLauncherMainWithEnv({
+        MAKA_HARNESS_AB_OUT_DIR: join(dir, 'out'),
+        MAKA_HARNESS_AB_TASKS_ROOT: join(dir, 'missing-tasks'),
+        MAKA_HARNESS_AB_LIMIT: '30',
+        MAKA_HARNESS_AB_DRY_RUN: '1',
       }),
       /MAKA_HARNESS_AB_LIMIT must be 5 or 89/,
     );
@@ -1369,17 +1384,12 @@ test('harness A/B CLI rejects the superseded 30-task pilot checkpoint', async ()
 test('harness A/B CLI accepts the complete 89-task profile limit', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'maka-harness-ab-cli-'));
   try {
-    const scriptPath = new URL('../../harbor/run-harness-ab.mjs', import.meta.url);
     await assert.rejects(
-      execFileAsync(process.execPath, [scriptPath.pathname], {
-        cwd: process.cwd(),
-        env: {
-          ...process.env,
-          MAKA_HARNESS_AB_OUT_DIR: join(dir, 'out'),
-          MAKA_HARNESS_AB_TASKS_ROOT: join(dir, 'missing-tasks'),
-          MAKA_HARNESS_AB_LIMIT: '89',
-          MAKA_HARNESS_AB_DRY_RUN: '1',
-        },
+      runLauncherMainWithEnv({
+        MAKA_HARNESS_AB_OUT_DIR: join(dir, 'out'),
+        MAKA_HARNESS_AB_TASKS_ROOT: join(dir, 'missing-tasks'),
+        MAKA_HARNESS_AB_LIMIT: '89',
+        MAKA_HARNESS_AB_DRY_RUN: '1',
       }),
       /Terminal-Bench 2\.1 task set mismatch/,
     );
