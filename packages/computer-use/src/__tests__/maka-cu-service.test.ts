@@ -219,11 +219,13 @@ describe('maka-cu supervisor: what the child may put on stdout', () => {
       const { service } = makeService({ afterHello: 'null' });
       const handshake = await service.ensureStarted();
       assert.equal(handshake.executor.name, 'maka-cu-mock');
-      await delay(200);
-      assert.deepEqual(uncaught, [], 'a null stdout line must not reach uncaughtException');
-      // Still usable: one stray line is not a dead executor.
+      // Still usable: one stray line is not a dead executor. The round-trip is
+      // also the ordering anchor for the uncaught check below: the stray line
+      // sits on stdout ahead of this response, so it was processed (and would
+      // have thrown in the data listener) before the call returned.
       const envelope = await service.call('window.list', {});
       assert.equal(envelope.ok, true);
+      assert.deepEqual(uncaught, [], 'a null stdout line must not reach uncaughtException');
     } finally {
       process.off('uncaughtException', onUncaught);
     }
@@ -232,7 +234,10 @@ describe('maka-cu supervisor: what the child may put on stdout', () => {
   it('tears the child down after three lines that are not protocol messages', async () => {
     const { service } = makeService({ afterHello: 'null|4|"not a message"' });
     await service.ensureStarted();
-    await delay(200);
+    // The junk lines stream in after the handshake settles; poll the teardown
+    // fact with a bounded deadline instead of guessing scheduler timing.
+    const deadline = Date.now() + 2_000;
+    while (service.snapshot().state !== 'idle' && Date.now() < deadline) await delay(10);
     assert.equal(service.snapshot().state, 'idle', 'three non-messages end the generation');
   });
 
