@@ -68,6 +68,7 @@ const DEFAULT_HANDSHAKE_TIMEOUT_MS = 5_000;
 const DEFAULT_SHUTDOWN_GRACE_MS = 10_000;
 const SHUTDOWN_HANDSHAKE_GRACE_MS = 1_000;
 const SHUTDOWN_OPERATION_GRACE_MS = 1_000;
+const INITIAL_CONNECTION_DEADLINE_DEFERRAL_LIMIT = 3;
 const HOST_PROTOCOL = {
   min: RUNTIME_HOST_PROTOCOL_VERSION,
   max: RUNTIME_HOST_PROTOCOL_VERSION,
@@ -180,6 +181,8 @@ export class RuntimeHostKernel {
   #compositionStartup: Promise<void> | undefined;
   #operationHandlers: OperationHandlerMap;
   #idleTimer: NodeJS.Timeout | undefined;
+  #initialConnectionDeadline: NodeJS.Timeout | undefined;
+  #initialConnectionDeadlineDeferrals = 0;
   #shutdownRequested = false;
   #shutdownTask: Promise<void> | undefined;
   #shutdownDeadlineTimer: NodeJS.Timeout | undefined;
@@ -278,6 +281,7 @@ export class RuntimeHostKernel {
     if (!this.#shutdownRequested) {
       this.#shutdownRequested = true;
       this.#cancelIdle();
+      this.#cancelInitialConnectionDeadline();
       this.#armShutdownDeadline();
       this.#beginCompositionDrain();
     }
@@ -300,6 +304,10 @@ export class RuntimeHostKernel {
     this.#compositionStartup = new Promise((resolve) => {
       settleCompositionStartup = resolve;
     });
+    // Armed only once #compositionStartup is assigned: a deadline that fired
+    // earlier would drive #closeResources past an undefined startup await and
+    // let shutdown complete without closing the composition created below.
+    this.#armInitialConnectionDeadline();
     const compositionStartup = (async () => {
       try {
         this.#composition = await this.#options.composition.create({
@@ -456,6 +464,7 @@ export class RuntimeHostKernel {
       };
     }
     this.#hasAcceptedConnection = true;
+    this.#cancelInitialConnectionDeadline();
     this.#acceptedTransports.add(transport);
     this.#handshakingTransports.delete(transport);
     this.#cancelIdle();
@@ -703,6 +712,39 @@ export class RuntimeHostKernel {
     );
   }
 
+  // The idle timer only arms once the kernel reaches true idle, so a
+  // composition startup that never settles or a residency held from boot
+  // would keep an ephemeral candidate that no Client ever reached alive
+  // forever. This deadline bounds the wait for the first accepted connection
+  // independently of composition progress. A handshake in flight defers it by
+  // the handshake budget instead of draining under a connecting Client, but
+  // only a bounded number of times: connections enter the handshaking set
+  // before their first hello byte, so a reconnect loop that never completes a
+  // handshake must not push the deadline out indefinitely.
+  #armInitialConnectionDeadline(delayMs?: number): void {
+    if (this.#lifecycle.kind !== 'ephemeral') return;
+    if (this.#hasAcceptedConnection || this.#shutdownRequested) return;
+    this.#initialConnectionDeadline = setTimeout(() => {
+      this.#initialConnectionDeadline = undefined;
+      if (this.#hasAcceptedConnection || this.#shutdownRequested) return;
+      if (
+        this.#handshakingTransports.size > 0 &&
+        this.#initialConnectionDeadlineDeferrals < INITIAL_CONNECTION_DEADLINE_DEFERRAL_LIMIT
+      ) {
+        this.#initialConnectionDeadlineDeferrals += 1;
+        this.#armInitialConnectionDeadline(this.#handshakeTimeoutMs);
+        return;
+      }
+      this.#requestDrain();
+    }, delayMs ?? this.#lifecycle.initialConnectionTimeoutMs);
+  }
+
+  #cancelInitialConnectionDeadline(): void {
+    if (!this.#initialConnectionDeadline) return;
+    clearTimeout(this.#initialConnectionDeadline);
+    this.#initialConnectionDeadline = undefined;
+  }
+
   #cancelIdle(): void {
     if (!this.#idleTimer) return;
     clearTimeout(this.#idleTimer);
@@ -732,6 +774,7 @@ export class RuntimeHostKernel {
       }
       this.#state = 'draining';
       this.#cancelIdle();
+      this.#cancelInitialConnectionDeadline();
       this.#shutdownTask = this.#closeResources();
       void this.#shutdownTask.then(
         () => {
