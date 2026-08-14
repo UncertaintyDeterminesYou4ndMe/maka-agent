@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { IpcMainInvokeEvent } from "electron";
+import { RuntimeHostOperationError } from '@maka/runtime-host/client';
 import {
   type SessionChangedEvent,
   type SessionChangedReason,
@@ -238,7 +239,57 @@ export function registerRuntimeHostSessionExecutionIpc(
           ? { turnOrchestration: command.turnOrchestration }
           : {}),
       };
-      const startResult = await deps.client.startTurn(startInput);
+      let startResult;
+      try {
+        startResult = await deps.client.startTurn(startInput);
+      } catch (error) {
+        // The renderer routes text at a session it sees as running to
+        // `sessions:steer`, but its view can lag the Host: another window, a
+        // Bot, or a Goal continuation may have opened the root Turn first, and
+        // that race surfaced here as a session_busy send failure that dropped
+        // the user's message (#1954). `turn.message.submit` resolves the race
+        // on the Host: an active session queues the text as steering, an idle
+        // one starts the Turn. Skill and orchestration sends keep the error —
+        // their turn semantics cannot be expressed as a queued message.
+        if (
+          !(error instanceof RuntimeHostOperationError) ||
+          error.code !== "session_busy" ||
+          (command.skillIds?.length ?? 0) > 0 ||
+          command.turnOrchestration
+        ) {
+          throw error;
+        }
+        const submitted = await deps.client.submitMessage({
+          sessionId,
+          messageId: newId(),
+          content: startInput.content,
+          placement: "current_turn",
+        });
+        const emptySkillInvocation = { loaded: [], failed: [], receipts: [] };
+        if (submitted.disposition === "turn_started") {
+          deps.emitSessionsChanged("status-change", sessionId, {
+            turnId: submitted.turnId,
+          });
+          return {
+            ok: true as const,
+            turnId: submitted.turnId,
+            attachments,
+            inlineReferences,
+            skillInvocation: emptySkillInvocation,
+          };
+        }
+        // The steering renderer believed this session idle; nudge it to
+        // refresh so its composer converges on the running turn.
+        deps.emitSessionsChanged("status-change", sessionId);
+        return {
+          ok: true as const,
+          steered: true as const,
+          turnId,
+          attachments,
+          inlineReferences,
+          skillInvocation: emptySkillInvocation,
+        };
+      }
       if (startResult.kind === "blocked") {
         return {
           ok: false as const,

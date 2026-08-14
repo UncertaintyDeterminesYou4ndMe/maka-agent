@@ -448,13 +448,29 @@ export function createAppShellChatActions(deps: {
         disarmTurnActive(sessionId, turnId);
         return false;
       }
+      if (sendResult.steered) {
+        // The send raced a root turn another client opened first; the text was
+        // queued into that turn as steering, so this send owns no turn. The
+        // steering_message event renders it in the transcript.
+        disarmTurnActive(sessionId, turnId);
+        options.onSessionResolved?.(sessionId);
+        return true;
+      }
+      // A busy-race fallback may have started the turn under an id the main
+      // process chose; move the arm and the optimistic message onto it.
+      const startedTurnId = sendResult.turnId ?? turnId;
+      if (startedTurnId !== turnId) {
+        disarmTurnActive(sessionId, turnId);
+        armTurnActive(sessionId, startedTurnId);
+        optimisticTurnId = startedTurnId;
+      }
       options.onSessionResolved?.(sessionId);
       if (activeIdRef.current === sessionId) {
         showSkillInvocationFeedback(uiLocale, toastApi, sendResult.skillInvocation);
       }
       showOptimisticUserMessage(
         sessionId,
-        turnId,
+        startedTurnId,
         options.displayText ??
           skillInvocationDisplayText(text, sendResult.skillInvocation),
         sendResult.attachments,
