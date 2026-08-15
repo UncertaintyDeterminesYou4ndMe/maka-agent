@@ -692,15 +692,17 @@ export class RuntimeHostKernel {
   #scheduleIdleIfNeeded(): void {
     if (this.#lifecycle.kind === 'service') return;
     if (this.#shutdownRequested) return;
+    // One timer authority per lifecycle phase: until the first connection is
+    // accepted, only #initialConnectionDeadline governs (it defers under an
+    // in-flight handshake, which #isTrueIdle() cannot see); afterwards the
+    // idle timer owns the idleGraceMs exit.
+    if (!this.#hasAcceptedConnection) return;
     if (!this.#isTrueIdle() || this.#idleTimer) return;
-    const timeoutMs = this.#hasAcceptedConnection
-      ? this.#lifecycle.idleGraceMs
-      : this.#lifecycle.initialConnectionTimeoutMs;
     this.#idleTimer = setTimeout(() => {
       this.#idleTimer = undefined;
       if (!this.#isTrueIdle()) return;
       void this.#commitShutdown().catch(() => undefined);
-    }, timeoutMs);
+    }, this.#lifecycle.idleGraceMs);
   }
 
   #isTrueIdle(): boolean {
