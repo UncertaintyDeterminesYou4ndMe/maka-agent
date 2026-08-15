@@ -1,4 +1,4 @@
-import { rawFinishReasonString, type ModelMessage } from './model-protocol.js';
+import { rawFinishReasonString, type ModelMessage, type ToolCallPart } from './model-protocol.js';
 import { buildRuntimeEventModelReplayPlan } from './model-history.js';
 import { toolResultOutput } from './tool-result-output.js';
 import type { HistoryCompactSummaryInput } from './ai-sdk-compaction-contract.js';
@@ -142,8 +142,15 @@ type ReplayPlanItems = ReturnType<typeof buildRuntimeEventModelReplayPlan>['item
 
 export function replayPlanItemsToModelMessages(items: ReplayPlanItems): ModelMessage[] {
   const out: ModelMessage[] = [];
+  // Parallel tool calls of one step must share one assistant message: strict
+  // OpenAI-compatible providers reject a second assistant message while the
+  // first's tool calls are still unanswered. The primary replay path gets this
+  // from the materializer's step merge; mirror it here by collecting a run of
+  // tool calls (uninterrupted by text or results) into one content array.
+  let openToolCalls: ToolCallPart[] | undefined;
   for (const item of items) {
     if (item.kind === 'text') {
+      openToolCalls = undefined;
       // Split on role so each push matches exactly one ModelMessage arm — no cast.
       const textPart = { type: 'text' as const, text: item.content };
       if (item.role === 'user') {
@@ -152,18 +159,20 @@ export function replayPlanItemsToModelMessages(items: ReplayPlanItems): ModelMes
         out.push({ role: 'assistant', content: [textPart] });
       }
     } else if (item.kind === 'tool_call') {
-      out.push({
-        role: 'assistant',
-        content: [
-          {
-            type: 'tool-call',
-            toolCallId: item.toolCallId,
-            toolName: item.toolName,
-            input: item.input,
-          },
-        ],
-      });
+      const part: ToolCallPart = {
+        type: 'tool-call',
+        toolCallId: item.toolCallId,
+        toolName: item.toolName,
+        input: item.input,
+      };
+      if (openToolCalls) {
+        openToolCalls.push(part);
+      } else {
+        openToolCalls = [part];
+        out.push({ role: 'assistant', content: openToolCalls });
+      }
     } else if (item.kind === 'tool_result') {
+      openToolCalls = undefined;
       out.push({
         role: 'tool',
         content: [
@@ -176,7 +185,8 @@ export function replayPlanItemsToModelMessages(items: ReplayPlanItems): ModelMes
         ],
       });
     }
-    // thinking entries are intentionally skipped for summarization
+    // thinking entries are intentionally skipped for summarization; they do
+    // not interrupt a run of parallel tool calls.
   }
   return out;
 }

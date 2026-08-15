@@ -166,6 +166,65 @@ describe('buildLlmHistorySummarizer', () => {
     expect(toolPart.output).toEqual({ type: 'json', value: { name: 'maka' } });
   });
 
+  test('groups parallel tool calls into one assistant message for strict providers', async () => {
+    const seen: Array<{ messages: unknown[] }> = [];
+    const generateText: AiSdkGenerateTextLike = async (opts) => {
+      seen.push(opts);
+      return { text: '## Goal\nX' };
+    };
+    const summarize = buildLlmHistorySummarizer({ resolveModel: () => 'fake-model', generateText });
+
+    const events: RuntimeEvent[] = [
+      ev({ role: 'user', author: 'user', content: { kind: 'text', text: '并行读两个文件' } }),
+      ev({
+        role: 'model',
+        author: 'agent',
+        content: { kind: 'function_call', id: 'fc1', name: 'read', args: { path: 'a.ts' } },
+      }),
+      ev({
+        role: 'model',
+        author: 'agent',
+        content: { kind: 'function_call', id: 'fc2', name: 'read', args: { path: 'b.ts' } },
+      }),
+      ev({
+        role: 'tool',
+        author: 'tool',
+        content: { kind: 'function_response', id: 'fc1', name: 'read', result: 'A' },
+      }),
+      ev({
+        role: 'tool',
+        author: 'tool',
+        content: { kind: 'function_response', id: 'fc2', name: 'read', result: 'B' },
+      }),
+      ev({ role: 'model', author: 'agent', content: { kind: 'text', text: 'ok' } }),
+    ];
+
+    await summarize(inputWith(events));
+
+    const messages = seen[0]!.messages as Array<{
+      role: string;
+      content: Array<{ type: string; toolCallId?: string }>;
+    }>;
+    // Both calls of the parallel step share one assistant message; a second
+    // assistant message before the first's results is the strict-provider 400
+    // in #3030.
+    const assistantToolCallMessages = messages.filter(
+      (m) => m.role === 'assistant' && m.content.some((part) => part.type === 'tool-call'),
+    );
+    assert.equal(assistantToolCallMessages.length, 1);
+    assert.deepEqual(
+      assistantToolCallMessages[0]!.content.map((part) => part.toolCallId),
+      ['fc1', 'fc2'],
+    );
+    const shape = messages.map((m) => `${m.role}:${m.content.map((part) => part.type).join('+')}`);
+    assert.deepEqual(shape.slice(-4), [
+      'assistant:tool-call+tool-call',
+      'tool:tool-result',
+      'tool:tool-result',
+      'assistant:text',
+    ]);
+  });
+
   test('surfaces provider failures so the runtime can report the real compact reason', async () => {
     const generateText: AiSdkGenerateTextLike = async () => {
       throw new Error('model down');
