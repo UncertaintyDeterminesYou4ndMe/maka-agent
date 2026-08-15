@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IpcMainInvokeEvent } from "electron";
 import { RuntimeHostOperationError } from '@maka/runtime-host/client';
+import { SKILL_INVOCATION_TOKEN_SOURCE } from '@maka/core/skill-invocation-token';
 import {
   type SessionChangedEvent,
   type SessionChangedReason,
@@ -250,12 +251,15 @@ export function registerRuntimeHostSessionExecutionIpc(
         // the user's message (#1954). `turn.message.submit` resolves the race
         // on the Host: an active session queues the text as steering, an idle
         // one starts the Turn. Skill and orchestration sends keep the error —
-        // their turn semantics cannot be expressed as a queued message.
+        // their turn semantics cannot be expressed as a queued message — and
+        // the Desktop composer carries Skills as canonical /skill: tokens in
+        // the text, not as skillIds.
         if (
           !(error instanceof RuntimeHostOperationError) ||
           error.code !== "session_busy" ||
           (command.skillIds?.length ?? 0) > 0 ||
-          command.turnOrchestration
+          command.turnOrchestration ||
+          new RegExp(SKILL_INVOCATION_TOKEN_SOURCE).test(command.text)
         ) {
           throw error;
         }

@@ -632,6 +632,17 @@ test("keeps the busy failure for a Skill send instead of degrading it to steerin
     ipc,
   );
 
+  // The Desktop composer carries Skills as canonical /skill: tokens in the
+  // text; explicit skillIds is the protocol-level variant.
+  await assert.rejects(
+    ipc.invoke("sessions:send", "session-1", {
+      type: "send",
+      turnId: "turn-1",
+      text: "/skill:review explain the tests",
+    }),
+    (error: unknown) =>
+      error instanceof RuntimeHostOperationError && error.code === "session_busy",
+  );
   await assert.rejects(
     ipc.invoke("sessions:send", "session-1", {
       type: "send",
