@@ -218,6 +218,7 @@ describe('history compact checkpoint', () => {
       sessionId: 'session-1',
       coveredRuntimeEvents: [textEvent(0)],
       summary,
+      summaryFormat: 'legacy_freeform',
     });
 
     assert.equal(checkpoint.summary, summary);
@@ -511,6 +512,39 @@ describe('history compact checkpoint', () => {
     assert.equal(legacy.version === 2 ? legacy.summaryFormat : undefined, undefined);
   });
 
+  test('the builder refuses to mint the sectioned marker for unvalidated text', () => {
+    // sections_v1 is proof the complete predicate held; a direct caller with
+    // free-form text cannot receive it.
+    assert.throws(
+      () =>
+        buildHistoryCompactCheckpoint({
+          sessionId: 'session-1',
+          coveredRuntimeEvents: [textEvent(0)],
+          summary: 'free-form prose without the mandated sections.',
+        }),
+      /summary failed validation: malformed_summary_missing_section/,
+    );
+  });
+
+  test('the builder re-runs the size floor over the covered span it is handed', () => {
+    // Every construction seam has the covered events in hand — including
+    // copy — so a structurally valid but undersized summary cannot be
+    // rebuilt over a large span and keep the marker.
+    const bigEvent: RuntimeEvent = {
+      ...textEvent(0),
+      content: { kind: 'text', text: `big ${'x'.repeat(60_000)}` },
+    };
+    assert.throws(
+      () =>
+        buildHistoryCompactCheckpoint({
+          sessionId: 'session-1',
+          coveredRuntimeEvents: [bigEvent],
+          summary: STRUCTURED_SUMMARY,
+        }),
+      /summary failed validation: malformed_summary_too_small_for_fold/,
+    );
+  });
+
   test('shape validation fails closed on an unknown summary format marker', () => {
     const stamped = buildHistoryCompactCheckpoint({
       sessionId: 'session-1',
@@ -538,13 +572,21 @@ describe('history compact checkpoint', () => {
       summary: STRUCTURED_SUMMARY,
       now: 10,
     });
-    const markedMalformed = buildHistoryCompactCheckpoint({
-      sessionId: 'session-1',
-      coveredRuntimeEvents: [textEvent(0), textEvent(1), textEvent(2)],
-      summary: 'complete-sounding free-form prose without the mandated sections.',
-      previousCheckpointId: valid.checkpointId,
-      now: 20,
-    });
+    // The builder refuses to mint the marker for unvalidated text, so a
+    // malformed marked checkpoint can only exist as pre-existing durable data
+    // (or via a hand-rolled object) — modeled here by restamping a legacy
+    // build.
+    const markedMalformed = {
+      ...buildHistoryCompactCheckpoint({
+        sessionId: 'session-1',
+        coveredRuntimeEvents: [textEvent(0), textEvent(1), textEvent(2)],
+        summary: 'complete-sounding free-form prose without the mandated sections.',
+        summaryFormat: 'legacy_freeform',
+        previousCheckpointId: valid.checkpointId,
+        now: 20,
+      }),
+      summaryFormat: 'sections_v1' as const,
+    };
     const store = new StubAgentRunStore(
       [run('run-valid', 10), run('run-marked', 20)],
       new Map([

@@ -16752,6 +16752,7 @@ class HistoryCompactCheckpointBackend implements AgentBackend {
         },
       ],
       summary: 'persist the bounded checkpoint',
+      summaryFormat: 'legacy_freeform',
     });
     this.ctx.recordHistoryCompactCheckpoint?.(
       { ...checkpoint, checkpointId: 'hcheckpoint-test' },
@@ -16803,6 +16804,7 @@ class HistoryCompactCheckpointCacheProbeBackend implements AgentBackend {
           },
         ],
         summary: 'share this checkpoint across session backends',
+        summaryFormat: 'legacy_freeform',
       });
       this.ctx.recordHistoryCompactCheckpoint?.(
         { ...checkpoint, checkpointId: 'hcheckpoint-shared' },
@@ -16861,6 +16863,7 @@ class HistoryCompactCheckpointMonotonicProbeBackend implements AgentBackend {
             sessionId: this.sessionId,
             coveredRuntimeEvents,
             summary: `${input.turnId} checkpoint`,
+            summaryFormat: 'legacy_freeform',
           }),
           input.turnId,
         )
@@ -16913,6 +16916,7 @@ class SameCoverageCheckpointReplacementProbeBackend implements AgentBackend {
           sessionId: this.sessionId,
           coveredRuntimeEvents,
           summary: `${input.turnId} summary`,
+          summaryFormat: 'legacy_freeform',
           ...(current ? { previousCheckpointId: current.checkpointId } : {}),
         }),
         input.turnId,
@@ -16969,6 +16973,7 @@ class SerializedCheckpointProbeBackend implements AgentBackend {
         sessionId: this.sessionId,
         coveredRuntimeEvents,
         summary: `${input.turnId} checkpoint`,
+        summaryFormat: 'legacy_freeform',
       }),
       input.turnId,
     );
@@ -17031,6 +17036,7 @@ class RecoveringCheckpointWriteProbeBackend implements AgentBackend {
           sessionId: this.sessionId,
           coveredRuntimeEvents,
           summary: `${input.turnId} checkpoint`,
+          summaryFormat: 'legacy_freeform',
         }),
         input.turnId,
       );
@@ -17092,6 +17098,7 @@ class CheckpointRecorderContractProbeBackend implements AgentBackend {
           sessionId: this.sessionId,
           coveredRuntimeEvents,
           summary: `${input.turnId} checkpoint`,
+          summaryFormat: 'legacy_freeform',
         }),
         input.turnId,
       );
@@ -17151,6 +17158,7 @@ class InitialCheckpointLoadRaceProbeBackend implements AgentBackend {
           sessionId: this.sessionId,
           coveredRuntimeEvents,
           summary: 'stale checkpoint during initial load',
+          summaryFormat: 'legacy_freeform',
         }),
         input.turnId,
       );

@@ -1005,6 +1005,7 @@ describe('reactive overflow recovery in the streaming backend', () => {
       sessionId: 'session-1',
       coveredRuntimeEvents: fixture.priorEvents,
       summary: 'EARLIER_TURN_SUMMARY',
+      summaryFormat: 'legacy_freeform',
     });
     carried = checkpoint;
     await runTurn(fixture);
@@ -1034,6 +1035,7 @@ describe('reactive overflow recovery in the streaming backend', () => {
         runtimeTextEvent('never-happened', 'turn-x', 'user', 'AN EVENT THIS LEDGER NEVER HELD'),
       ],
       summary: 'SUMMARY_OF_ANOTHER_HISTORY',
+      summaryFormat: 'legacy_freeform',
     });
     const fixture = buildReactiveFixture({
       script: ['done'],

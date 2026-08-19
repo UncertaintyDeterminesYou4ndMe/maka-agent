@@ -5,6 +5,7 @@ import type { RuntimeEvent } from '@maka/core/runtime-event';
 import type { ModelMessage } from './model-protocol.js';
 import { stableStringify } from './request-shape.js';
 import {
+  findCheckpointSummaryDefect,
   SECTIONED_SUMMARY_FORMAT,
   type SectionedSummaryFormat,
 } from './history-compact-summary-validation.js';
@@ -190,6 +191,21 @@ export function buildHistoryCompactCheckpoint(
   }
   if (providerState && !validHistoryCompactProviderState(providerState)) {
     throw new Error('History compact checkpoint requires valid provider compaction state');
+  }
+  // The sectioned marker is proof that the complete predicate held, so only
+  // this builder assigns it — and only after re-checking against the covered
+  // span (structure, truncation, AND the size floor, since the covered events
+  // are in hand here at every construction seam, including copy). A caller
+  // with unvalidated free-form text must declare `legacy_freeform` instead of
+  // minting trust it did not earn.
+  if (!providerState && input.summaryFormat !== 'legacy_freeform') {
+    const defect = findCheckpointSummaryDefect(summary!, {
+      coveredRuntimeEvents: input.coveredRuntimeEvents,
+      ...(input.charsPerToken !== undefined ? { charsPerToken: input.charsPerToken } : {}),
+    });
+    if (defect) {
+      throw new Error(`History compact checkpoint summary failed validation: ${defect}`);
+    }
   }
   // A mid_turn checkpoint folds a prefix that reaches into the current turn, so
   // its head anchor MUST be one of the covered events — the projection re-renders

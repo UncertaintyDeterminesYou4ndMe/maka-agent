@@ -1027,6 +1027,7 @@ describe('buildLlmHistorySummarizer', () => {
       sessionId: 'sess-1',
       coveredRuntimeEvents: [old],
       summary: 'PRIOR_SUMMARY',
+      summaryFormat: 'legacy_freeform',
     });
     const summarize = buildLlmHistorySummarizer({
       resolveModel: () => 'fake-model',
@@ -1136,6 +1137,7 @@ describe('buildLlmHistorySummarizer', () => {
       sessionId: 'sess-1',
       coveredRuntimeEvents: [old],
       summary: 'PRIOR_SUMMARY',
+      summaryFormat: 'legacy_freeform',
     });
     const input = inputWith([old, newer]);
 

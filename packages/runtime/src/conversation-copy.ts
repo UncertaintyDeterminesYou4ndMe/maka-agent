@@ -618,20 +618,23 @@ function cloneAgentRunEvent(
     // a fresh checkpoint on demand. Do not export opaque provider state into a
     // new session or degrade it into user-visible placeholder text.
     if (sourceCheckpoint.version === 3) return null;
-    // Copy is an admission seam for the sectioned summary contract: a marked
-    // checkpoint whose summary no longer satisfies the complete predicate
-    // must not propagate into a fresh session. Unmarked legacy summaries stay
-    // copyable under the truncation-only load policy and keep their unmarked
-    // identity in the target.
-    if (
-      sourceCheckpoint.summaryFormat !== undefined &&
-      findCheckpointSummaryDefect(sourceCheckpoint.summary) !== undefined
-    ) {
-      throw new Error(`Cannot copy invalid history compact checkpoint ${event.id}`);
-    }
     const match = matchHistoryCompactCheckpointPrefix(sourceCheckpoint, sourceCompactableEvents);
     if (match.reason) {
       throw new Error(`Cannot copy unmatched history compact checkpoint ${event.id}`);
+    }
+    // Copy is an admission seam for the sectioned summary contract: a marked
+    // checkpoint whose summary no longer satisfies the COMPLETE predicate —
+    // including the size floor, re-runnable here because the matched covered
+    // span is in hand — must not propagate into a fresh session. Unmarked
+    // legacy summaries stay copyable under the truncation-only load policy
+    // and keep their unmarked identity in the target.
+    if (
+      sourceCheckpoint.summaryFormat !== undefined &&
+      findCheckpointSummaryDefect(sourceCheckpoint.summary, {
+        coveredRuntimeEvents: match.coveredRuntimeEvents,
+      }) !== undefined
+    ) {
+      throw new Error(`Cannot copy invalid history compact checkpoint ${event.id}`);
     }
     const coveredRuntimeEvents = match.coveredRuntimeEvents.map((sourceEvent) => {
       const cloned = clonedRuntimeEvents.get(sourceEvent.id);

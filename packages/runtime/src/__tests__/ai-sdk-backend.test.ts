@@ -5329,6 +5329,7 @@ describe('AiSdkBackend model history', () => {
       sessionId: 'session-1',
       coveredRuntimeEvents: oldEvents.slice(0, 1),
       summary: 'MANUAL_V2_PREVIOUS_SUMMARY',
+      summaryFormat: 'legacy_freeform',
       charsPerToken: 1,
     });
     const summaryInputs: Array<{ previous?: string; newlyFoldedIds: string[] }> = [];
@@ -5410,6 +5411,7 @@ describe('AiSdkBackend model history', () => {
       sessionId: 'session-1',
       coveredRuntimeEvents: oldEvents,
       summary: 'MANUAL_V2_REUSED_SUMMARY',
+      summaryFormat: 'legacy_freeform',
       charsPerToken: 1,
     });
     let summarizeCalls = 0;
@@ -5485,6 +5487,7 @@ describe('AiSdkBackend model history', () => {
       sessionId: 'session-1',
       coveredRuntimeEvents: oldEvents,
       summary: 'OVERSIZED_PREVIOUS_SUMMARY '.repeat(100),
+      summaryFormat: 'legacy_freeform',
       charsPerToken: 1,
     });
 
