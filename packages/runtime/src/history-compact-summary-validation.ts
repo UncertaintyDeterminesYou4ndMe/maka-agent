@@ -206,25 +206,31 @@ function scanSummaryStructure(text: string): SummaryStructureScan {
       countContent(line);
       continue;
     }
+    // CommonMark ATX headings tolerate up to three leading spaces; four or
+    // more is indented code (which the template-placeholder and bare-marker
+    // exclusions still keep information-free).
     if (
       matchedSections < REQUIRED_SUMMARY_SECTIONS.length &&
-      line.trimEnd() === REQUIRED_SUMMARY_SECTIONS[matchedSections]
+      /^ {0,3}#/.test(line) &&
+      line.trim() === REQUIRED_SUMMARY_SECTIONS[matchedSections]
     ) {
       matchedSections += 1;
       attributesToRequiredSection = true;
       continue;
     }
-    // Any other H2 opens its own (non-required) section; deeper headings
-    // organize within the current one.
-    if (/^##\s/.test(line)) {
+    // Any other H2 (the marker run may also end the line) opens its own
+    // (non-required) section; deeper headings organize within the current
+    // one.
+    if (/^ {0,3}##(?!#)(?:\s|$)/.test(line)) {
       attributesToRequiredSection = false;
       continue;
     }
-    // Anything non-blank that is not itself a heading, a thematic break, or
-    // a verbatim template line counts as content for the most recently
-    // matched section (subheadings organize, lists carry, horizontal rules
-    // separate).
-    if (!/^#{1,6}\s/.test(line) && !/^\s*([-*_])\s*(?:\1\s*){2,}$/.test(line)) {
+    // Anything non-blank that is not itself an ATX heading of any level —
+    // including bare marker runs and headings indented up to three spaces —
+    // a thematic break, or a verbatim template line counts as content for
+    // the most recently matched section (subheadings organize, lists carry,
+    // horizontal rules separate).
+    if (!/^ {0,3}#{1,6}(?:\s|$)/.test(line) && !/^\s*([-*_])\s*(?:\1\s*){2,}$/.test(line)) {
       countContent(line);
     }
   }

@@ -825,6 +825,49 @@ describe('buildLlmHistorySummarizer', () => {
     expect(result).toBe(closedByLonger);
   });
 
+  test('indented and bare heading markers are headings, not section content', async () => {
+    // CommonMark ATX headings tolerate up to three leading spaces and allow
+    // the marker run to end the line; a skeleton padded with such pseudo-body
+    // lines carries no information and must not earn the sectioned marker.
+    const skeleton = [
+      '## Goal',
+      ' ### Done',
+      '',
+      '## Progress',
+      '  ###',
+      '',
+      '## Next Steps',
+      ' ##',
+      '',
+      '## Critical Context',
+      '   #### notes',
+    ].join('\n');
+    const summarize = buildLlmHistorySummarizer({
+      resolveModel: () => 'fake-model',
+      generateText: async () => ({ text: skeleton }),
+    });
+
+    await assert.rejects(
+      summarize(
+        inputWith([ev({ role: 'user', author: 'user', content: { kind: 'text', text: 'hi' } })]),
+      ),
+      /malformed_summary_missing_section/,
+    );
+  });
+
+  test('a required heading indented up to three spaces still matches its section', async () => {
+    const indented = VALID_SUMMARY.replace('## Progress', ' ## Progress');
+    const summarize = buildLlmHistorySummarizer({
+      resolveModel: () => 'fake-model',
+      generateText: async () => ({ text: indented }),
+    });
+
+    const result = await summarize(
+      inputWith([ev({ role: 'user', author: 'user', content: { kind: 'text', text: 'hi' } })]),
+    );
+    expect(result).toBe(indented);
+  });
+
   test('rejects a heading-only skeleton with no section content', async () => {
     const summarize = buildLlmHistorySummarizer({
       resolveModel: () => 'fake-model',
