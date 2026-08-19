@@ -131,8 +131,12 @@ function findTruncationDefect(
 
 // One line scan holding a single interpretation of the document for both
 // checks: the mandated sections must appear in order, each with non-empty
-// content, and only OUTSIDE fenced code blocks — a degraded model quoting the
-// template inside a fence must not count as structure. Fences follow the
+// content. Section HEADINGS are recognized only OUTSIDE fenced code blocks —
+// a degraded model quoting the template inside a fence must not count as
+// structure — while fenced lines are literal content of their enclosing
+// section (preserved commands and errors are exactly what a checkpoint must
+// carry; only template placeholders and bare marker runs are excluded).
+// Fences follow the
 // Markdown closing rule: same character family AND a run at least as long as
 // the opener (a shorter run stays fenced content), tracked line-opening only
 // so a verbatim ``` inside a preserved error message stays content. The scan
