@@ -59,6 +59,11 @@ const TEMPLATE_PLACEHOLDER_LINES: ReadonlySet<string> = new Set(
   SUMMARY_FORMAT_TEMPLATE.map((line) => line.trim()).filter((line) => line.length > 0),
 );
 
+// CommonMark ATX headings may be indented by up to three spaces, and the
+// marker run may end the line. Capture the run once so section transitions
+// and content exclusion cannot disagree about what is a heading.
+const ATX_HEADING = /^ {0,3}(#{1,6})(?:\s|$)/;
+
 // Floors for the incident's shape: folding a large span into a paragraph
 // cannot be a faithful checkpoint. Folds above ~10k estimated tokens require
 // at least ~200 estimated tokens of summary, both measured at the session's
@@ -214,9 +219,10 @@ function scanSummaryStructure(text: string): SummaryStructureScan {
       attributesToRequiredSection = true;
       continue;
     }
+    const heading = ATX_HEADING.exec(line);
     // Any other H2 opens its own (non-required) section; deeper headings
     // organize within the current one.
-    if (/^##\s/.test(line)) {
+    if (heading?.[1]?.length === 2) {
       attributesToRequiredSection = false;
       continue;
     }
@@ -224,7 +230,7 @@ function scanSummaryStructure(text: string): SummaryStructureScan {
     // a verbatim template line counts as content for the most recently
     // matched section (subheadings organize, lists carry, horizontal rules
     // separate).
-    if (!/^#{1,6}\s/.test(line) && !/^\s*([-*_])\s*(?:\1\s*){2,}$/.test(line)) {
+    if (!heading && !/^\s*([-*_])\s*(?:\1\s*){2,}$/.test(line)) {
       countContent(line);
     }
   }

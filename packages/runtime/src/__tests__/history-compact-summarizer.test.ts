@@ -839,6 +839,31 @@ describe('buildLlmHistorySummarizer', () => {
     );
   });
 
+  test('indented and bare ATX headings cannot supply section content', async () => {
+    const summarize = buildLlmHistorySummarizer({
+      resolveModel: () => 'fake-model',
+      generateText: async () => ({
+        text: [
+          '## Goal',
+          '  ### Done',
+          '## Progress',
+          '##',
+          '## Next Steps',
+          '   ####',
+          '## Critical Context',
+          ' #',
+        ].join('\n'),
+      }),
+    });
+
+    await assert.rejects(
+      summarize(
+        inputWith([ev({ role: 'user', author: 'user', content: { kind: 'text', text: 'hi' } })]),
+      ),
+      /malformed_summary_missing_section/,
+    );
+  });
+
   test('horizontal rules between headings are separators, not section content', async () => {
     const summarize = buildLlmHistorySummarizer({
       resolveModel: () => 'fake-model',
