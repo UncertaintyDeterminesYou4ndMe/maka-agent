@@ -1,5 +1,5 @@
 import type { RuntimeEvent } from '@maka/core/runtime-event';
-import { estimateRuntimeEventsTokens } from './context-budget-helpers.js';
+import { estimateRuntimeEventsTokens, estimateTokens } from './context-budget-helpers.js';
 
 // The single authority on what a history-compact checkpoint summary must look
 // like (#3029). The summarization prompt is built from the same constants and
@@ -95,8 +95,11 @@ export function findCheckpointSummaryDefect(
   if (foldContext !== undefined) {
     // Clamped so a zero/negative estimate cannot zero out the floor.
     const charsPerToken = Math.max(1, foldContext.charsPerToken ?? DEFAULT_CHARS_PER_TOKEN);
+    // Both sides use the shared ceil-based estimator so the floor cannot
+    // disagree with the repository's estimated-token semantics at the
+    // boundary.
     if (
-      trimmed.length < LARGE_FOLD_SUMMARY_TOKENS_FLOOR * charsPerToken &&
+      estimateTokens(trimmed.length, charsPerToken) < LARGE_FOLD_SUMMARY_TOKENS_FLOOR &&
       estimateRuntimeEventsTokens(foldContext.coveredRuntimeEvents, charsPerToken) >
         LARGE_FOLD_ESTIMATED_TOKENS
     ) {

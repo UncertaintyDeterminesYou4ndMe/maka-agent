@@ -1014,6 +1014,31 @@ describe('buildLlmHistorySummarizer', () => {
     );
   });
 
+  test('a summary at exactly the floor is accepted under ceil-based token estimates', async () => {
+    // 799 chars at 4 chars/token is ceil(799/4) = 200 estimated tokens —
+    // exactly the documented floor, so it must pass, not be rejected by a
+    // raw-character comparison.
+    const skeleton = (progress: string) =>
+      `## Goal\nX\n\n## Progress\n- ${progress}\n\n## Next Steps\n1. continue\n\n## Critical Context\n- (none)`;
+    const exactFloor = skeleton('p'.repeat(799 - skeleton('').length));
+    assert.equal(exactFloor.length, 799);
+    const summarize = buildLlmHistorySummarizer({
+      resolveModel: () => 'fake-model',
+      generateText: async () => ({ text: exactFloor }),
+    });
+
+    const result = await summarize(
+      inputWith([
+        ev({
+          role: 'user',
+          author: 'user',
+          content: { kind: 'text', text: `big ${'x'.repeat(60_000)}` },
+        }),
+      ]),
+    );
+    expect(result).toBe(exactFloor);
+  });
+
   test('accepts a proportionate structured summary for a large folded span', async () => {
     const longSummary = [
       '## Goal',
