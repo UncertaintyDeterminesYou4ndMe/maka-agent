@@ -13298,6 +13298,7 @@ describe('SessionManager permission mode updates', () => {
         }),
       ),
       summary: 'durable checkpoint',
+      summaryFormat: 'legacy_freeform',
     });
     await seedRun(
       runStore,
@@ -13394,6 +13395,7 @@ describe('SessionManager permission mode updates', () => {
         }),
       ),
       summary: 'durable checkpoint before projection loss',
+      summaryFormat: 'legacy_freeform',
     });
     const durableEvent = makeRunEvent({
       sessionId: session.id,

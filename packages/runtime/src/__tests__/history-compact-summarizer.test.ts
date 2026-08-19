@@ -783,6 +783,35 @@ describe('buildLlmHistorySummarizer', () => {
     );
   });
 
+  test('a four-space-indented marker run is indented code, not a fence closer', async () => {
+    // Markdown allows a fence delimiter at most three leading spaces; four or
+    // more is indented code, so it must not close the open fence.
+    const summarize = buildLlmHistorySummarizer({
+      resolveModel: () => 'fake-model',
+      generateText: async () => ({ text: `${VALID_SUMMARY}\n\n\`\`\`\ncode\n    \`\`\`` }),
+    });
+
+    await assert.rejects(
+      summarize(
+        inputWith([ev({ role: 'user', author: 'user', content: { kind: 'text', text: 'hi' } })]),
+      ),
+      /malformed_summary_truncated/,
+    );
+  });
+
+  test('a fence closer indented up to three spaces still closes', async () => {
+    const threeSpaceCloser = `${VALID_SUMMARY}\n\n\`\`\`\ncode\n   \`\`\`\nafter`;
+    const summarize = buildLlmHistorySummarizer({
+      resolveModel: () => 'fake-model',
+      generateText: async () => ({ text: threeSpaceCloser }),
+    });
+
+    const result = await summarize(
+      inputWith([ev({ role: 'user', author: 'user', content: { kind: 'text', text: 'hi' } })]),
+    );
+    expect(result).toBe(threeSpaceCloser);
+  });
+
   test('a longer same-family run still closes a narrower fence', async () => {
     const closedByLonger = `${VALID_SUMMARY}\n\n\`\`\`\ncode\n\`\`\`\`\nafter`;
     const summarize = buildLlmHistorySummarizer({

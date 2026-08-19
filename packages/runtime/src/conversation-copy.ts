@@ -16,6 +16,7 @@ import {
   matchHistoryCompactCheckpointPrefix,
   validateHistoryCompactCheckpointShape,
 } from './history-compact-checkpoint.js';
+import { findCheckpointSummaryDefect } from './history-compact-summary-validation.js';
 import { isHistoryCompactContentEvent } from './history-compact.js';
 import {
   classifyTerminalRuntimeLedger,
@@ -617,6 +618,17 @@ function cloneAgentRunEvent(
     // a fresh checkpoint on demand. Do not export opaque provider state into a
     // new session or degrade it into user-visible placeholder text.
     if (sourceCheckpoint.version === 3) return null;
+    // Copy is an admission seam for the sectioned summary contract: a marked
+    // checkpoint whose summary no longer satisfies the complete predicate
+    // must not propagate into a fresh session. Unmarked legacy summaries stay
+    // copyable under the truncation-only load policy and keep their unmarked
+    // identity in the target.
+    if (
+      sourceCheckpoint.summaryFormat !== undefined &&
+      findCheckpointSummaryDefect(sourceCheckpoint.summary) !== undefined
+    ) {
+      throw new Error(`Cannot copy invalid history compact checkpoint ${event.id}`);
+    }
     const match = matchHistoryCompactCheckpointPrefix(sourceCheckpoint, sourceCompactableEvents);
     if (match.reason) {
       throw new Error(`Cannot copy unmatched history compact checkpoint ${event.id}`);
@@ -643,6 +655,7 @@ function cloneAgentRunEvent(
       sessionId: references.targetSessionId,
       coveredRuntimeEvents,
       summary: sourceCheckpoint.summary,
+      summaryFormat: sourceCheckpoint.summaryFormat ?? 'legacy_freeform',
       highWaterName: sourceCheckpoint.highWaterName,
       highWaterSeq: sourceCheckpoint.highWaterSeq,
       now: sourceCheckpoint.createdAt,

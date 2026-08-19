@@ -5,7 +5,10 @@ import {
   validateHistoryCompactCheckpointShape,
   type HistoryCompactCheckpoint,
 } from './history-compact-checkpoint.js';
-import { findCheckpointSummaryTruncationDefect } from './history-compact-summary-validation.js';
+import {
+  findCheckpointSummaryDefect,
+  findCheckpointSummaryTruncationDefect,
+} from './history-compact-summary-validation.js';
 
 interface LedgerCheckpointCandidate {
   checkpoint: HistoryCompactCheckpoint;
@@ -13,15 +16,21 @@ interface LedgerCheckpointCandidate {
 }
 
 /**
- * Legacy checkpoints predate the sectioned summarizer contract, so their
- * summaries may omit `## Goal` etc. and remain usable. A truncated fragment,
- * however, poisons every subsequent replay with a half-finished thought
- * regardless of which writer produced it (#3029, #3041). The load path asks
- * the shared summary scanner only for its truncation result, leaving
- * section-less legacy summaries intact.
+ * Version-aware semantic admission at the load authority (#3029, #3041).
+ * A checkpoint stamped with the sectioned summary format is held to the
+ * complete shared predicate (minus the size floor, whose covered-span
+ * estimate is not durable), so a malformed summary that slipped through a
+ * direct recorder or copy seam never becomes authoritative again after
+ * restart. Unmarked legacy checkpoints predate the sectioned contract, so
+ * their summaries may omit `## Goal` etc. and remain usable; only a
+ * truncated fragment — which poisons every subsequent replay with a
+ * half-finished thought regardless of writer — is quarantined.
  */
 function hasLoadableHistoryCompactSummary(checkpoint: HistoryCompactCheckpoint): boolean {
   if (!isTextHistoryCompactCheckpoint(checkpoint)) return true;
+  if (checkpoint.summaryFormat !== undefined) {
+    return findCheckpointSummaryDefect(checkpoint.summary) === undefined;
+  }
   return findCheckpointSummaryTruncationDefect(checkpoint.summary) === undefined;
 }
 

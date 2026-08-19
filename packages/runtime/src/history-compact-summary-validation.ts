@@ -6,6 +6,15 @@ import { estimateRuntimeEventsTokens, estimateTokens } from './context-budget-he
 // the load side can consume the same predicate, so the mandated format and
 // every validation site share one contract that cannot drift.
 
+/**
+ * Durable identity of the sectioned summary contract. Stamped on newly built
+ * text checkpoints so record, load/repair, and copy can hold them to the
+ * complete predicate, while unmarked legacy V2 free-form summaries stay
+ * loadable under the truncation-only compatibility policy.
+ */
+export const SECTIONED_SUMMARY_FORMAT = 'sections_v1' as const;
+export type SectionedSummaryFormat = typeof SECTIONED_SUMMARY_FORMAT;
+
 export type CheckpointSummaryDefect =
   | 'malformed_summary_missing_section'
   | 'malformed_summary_truncated'
@@ -167,7 +176,10 @@ function scanSummaryStructure(text: string): SummaryStructureScan {
   };
   // Normalized so CRLF input cannot smuggle a trailing \r past any line check.
   for (const line of text.split(/\r?\n/)) {
-    const fence = /^\s*(`{3,}|~{3,})/.exec(line);
+    // Markdown allows a fence delimiter at most three leading spaces of
+    // indentation; four or more is indented code, never a delimiter — so an
+    // indented marker run cannot falsely close (or open) a fence.
+    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(line);
     if (fence) {
       const family = fence[1]![0]!;
       const width = fence[1]!.length;

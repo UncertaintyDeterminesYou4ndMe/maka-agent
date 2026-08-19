@@ -4,6 +4,10 @@ import type { ExecutionLogCoverage } from '@maka/core/execution-log-coverage';
 import type { RuntimeEvent } from '@maka/core/runtime-event';
 import type { ModelMessage } from './model-protocol.js';
 import { stableStringify } from './request-shape.js';
+import {
+  SECTIONED_SUMMARY_FORMAT,
+  type SectionedSummaryFormat,
+} from './history-compact-summary-validation.js';
 
 export const HISTORY_COMPACT_SOURCE_POLICY_VERSION =
   'maka.compactable_runtime_event_projection.v1' as const;
@@ -79,6 +83,14 @@ interface HistoryCompactCheckpointBase {
 export interface TextHistoryCompactCheckpoint extends HistoryCompactCheckpointBase {
   version: 2;
   summary: string;
+  /**
+   * Durable identity of the summary contract the writer honored. Present on
+   * checkpoints built under the sectioned contract (#3029), which every
+   * admission seam (load/repair, copy) holds to the complete predicate;
+   * absent on legacy free-form V2 data, kept loadable under the
+   * truncation-only compatibility policy.
+   */
+  summaryFormat?: SectionedSummaryFormat;
 }
 
 export interface OpenAiCodexRemoteCompactState {
@@ -117,11 +129,17 @@ interface BuildHistoryCompactCheckpointBaseInput {
 
 export type BuildTextHistoryCompactCheckpointInput = BuildHistoryCompactCheckpointBaseInput & {
   summary: string;
+  /**
+   * Defaults to the sectioned contract. `legacy_freeform` builds an unmarked
+   * checkpoint — only for preserving a legacy source summary across copy.
+   */
+  summaryFormat?: SectionedSummaryFormat | 'legacy_freeform';
   providerState?: never;
 };
 export type BuildProviderHistoryCompactCheckpointInput = BuildHistoryCompactCheckpointBaseInput & {
   providerState: HistoryCompactProviderState;
   summary?: never;
+  summaryFormat?: never;
 };
 export type BuildHistoryCompactCheckpointInput =
   | BuildTextHistoryCompactCheckpointInput
@@ -278,7 +296,14 @@ export function buildHistoryCompactCheckpoint(
   };
   const checkpoint: HistoryCompactCheckpoint = providerState
     ? { ...common, version: 3, providerState }
-    : { ...common, version: 2, summary: summary! };
+    : {
+        ...common,
+        version: 2,
+        summary: summary!,
+        ...(input.summaryFormat === 'legacy_freeform'
+          ? {}
+          : { summaryFormat: SECTIONED_SUMMARY_FORMAT }),
+      };
   checkpoint.estimatedTokens = estimateTokens(
     isProviderHistoryCompactCheckpoint(checkpoint)
       ? JSON.stringify(historyCompactCheckpointToModelMessage(checkpoint)).length
@@ -430,6 +455,12 @@ export function validateHistoryCompactCheckpointShape(
     (checkpoint.version === 2
       ? typeof checkpoint.summary === 'string' &&
         checkpoint.summary.trim().length > 0 &&
+        // Absent = legacy free-form; a present marker must be one this code
+        // understands, so an unknown future format fails closed to the
+        // canonical-events repair path instead of replaying unvalidated.
+        ((checkpoint as Partial<TextHistoryCompactCheckpoint>).summaryFormat === undefined ||
+          (checkpoint as Partial<TextHistoryCompactCheckpoint>).summaryFormat ===
+            SECTIONED_SUMMARY_FORMAT) &&
         !('providerState' in checkpoint)
       : !('summary' in checkpoint) &&
         validHistoryCompactProviderState(
