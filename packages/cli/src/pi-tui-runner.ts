@@ -1082,6 +1082,8 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
   // The runner holds them so the wizard stays UI-only; the secret never crosses
   // back into the wizard.
   let wizardApiKey = '';
+  // The relay endpoint from the base-URL step ('' reuses the persisted one).
+  let wizardBaseUrl = '';
   let wizardModels: readonly ModelInfo[] = [];
   // Authoritative ready model choices for `/model`. A startup snapshot refreshed
   // in place after `/setup` saves so newly configured models are immediately
@@ -1848,6 +1850,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     wizard = undefined;
     wizardProviderType = undefined;
     wizardApiKey = '';
+    wizardBaseUrl = '';
     wizardModels = [];
   };
 
@@ -1872,7 +1875,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     const attempt = ++wizardAttempt;
     targetWizard.setVerifying();
     requestRender();
-    void input.onboarding.verify({ providerType, apiKey }).then(
+    void input.onboarding.verify({ providerType, apiKey, baseUrl: wizardBaseUrl }).then(
       (result) => {
         if (closed || wizard !== targetWizard || attempt !== wizardAttempt) return;
         if (result.kind === 'error') {
@@ -1911,7 +1914,13 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     targetWizard.setSaving();
     requestRender();
     void input.onboarding
-      .save({ providerType, apiKey: wizardApiKey, enabledModelIds, models: wizardModels })
+      .save({
+        providerType,
+        apiKey: wizardApiKey,
+        baseUrl: wizardBaseUrl,
+        enabledModelIds,
+        models: wizardModels,
+      })
       .then(
         (result) => {
           if (result.kind === 'error') {
@@ -1982,8 +1991,13 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       onPickProvider: (providerType) => {
         wizardProviderType = providerType;
         wizardApiKey = '';
+        wizardBaseUrl = '';
         wizardModels = [];
         wizardAttempt += 1; // a new pick supersedes any in-flight attempt
+        requestRender();
+      },
+      onSubmitBaseUrl: (baseUrl) => {
+        wizardBaseUrl = baseUrl;
         requestRender();
       },
       onSubmitKey: submitWizardKey,

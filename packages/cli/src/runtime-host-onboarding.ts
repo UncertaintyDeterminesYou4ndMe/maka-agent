@@ -41,7 +41,8 @@ export function createRuntimeHostOnboardingSurface(
       try {
         const result = await connection.request('connection.onboarding.verify', {
           providerType: input.providerType,
-          apiKey: normalizedSecret(input.apiKey),
+          apiKey: trimmedOrNull(input.apiKey),
+          baseUrl: trimmedOrNull(input.baseUrl),
         });
         return result.kind === 'verified'
           ? { kind: 'ok', models: [...result.models] }
@@ -54,7 +55,8 @@ export function createRuntimeHostOnboardingSurface(
       try {
         const result = await connection.request('connection.onboarding.save', {
           providerType: input.providerType,
-          apiKey: normalizedSecret(input.apiKey),
+          apiKey: trimmedOrNull(input.apiKey),
+          baseUrl: trimmedOrNull(input.baseUrl),
           enabledModelIds: [...input.enabledModelIds],
         });
         if (result.kind !== 'saved') {
@@ -114,7 +116,7 @@ function projectProviders(catalog: ConnectionCatalogSnapshot): OnboardingProvide
   });
 }
 
-function normalizedSecret(value: string | undefined): string | null {
+function trimmedOrNull(value: string | undefined): string | null {
   const secret = value?.trim() ?? '';
   return secret.length === 0 ? null : secret;
 }
@@ -128,6 +130,8 @@ function onboardingFailureText(input: {
   switch (input.reason) {
     case 'credential_not_configured':
       return 'API key is required';
+    case 'base_url_not_configured':
+      return 'A base URL is required for this provider';
     case 'provider_unsupported':
       return 'This provider does not support API-key onboarding';
     case 'slug_conflict':

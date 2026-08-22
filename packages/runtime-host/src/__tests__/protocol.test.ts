@@ -164,6 +164,12 @@ describe('Runtime Host bootstrap protocol', () => {
     assert.ok(RUNTIME_HOST_COMPATIBILITY_EPOCH > 38);
   });
 
+  test('publishes a new compatibility epoch for onboarding endpoint overrides', () => {
+    // Epoch 44 peers reject the required `baseUrl` on onboarding inputs and
+    // the `base_url_not_configured` rejection on its results.
+    assert.ok(RUNTIME_HOST_COMPATIBILITY_EPOCH > 44);
+  });
+
   test('adds credential rotation without changing existing credential inputs', () => {
     const issueInput = {
       principalKind: 'remote_owner',

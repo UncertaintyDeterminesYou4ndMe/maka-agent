@@ -58,6 +58,8 @@ export interface OnboardingProviderEntry extends OnboardableProvider {
 export interface OnboardingVerifyInput {
   providerType: ProviderType;
   apiKey?: string;
+  /** Endpoint for `requiresBaseUrl` providers; blank reuses the persisted one. */
+  baseUrl?: string;
 }
 
 export type OnboardingVerifyResult =
@@ -67,6 +69,8 @@ export type OnboardingVerifyResult =
 export interface OnboardingSaveInput {
   providerType: ProviderType;
   apiKey?: string;
+  /** Endpoint for `requiresBaseUrl` providers; blank reuses the persisted one. */
+  baseUrl?: string;
   enabledModelIds: readonly string[];
   models: readonly ModelInfo[];
 }
