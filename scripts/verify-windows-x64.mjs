@@ -110,6 +110,7 @@ export async function verifyPackagedWindowsApp(
     requireWindowsSandbox: requiresCurrentContract,
     requireDisclaimer: requiresCurrentContract,
     bundledGitContract: requiresCurrentContract ? 'forbidden' : 'legacy-required',
+    requireCanonicalIcon: requiresCurrentContract,
   });
   if (requiresCurrentContract) await assertPackagedDependencyClosure(resources);
   else await requirePath(join(resources, 'git', 'cmd', 'git.exe'));
