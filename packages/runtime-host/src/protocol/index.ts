@@ -92,8 +92,9 @@ export const RUNTIME_HOST_PROTOCOL_VERSION = 0 as const;
 // Increment when the same protocol version no longer guarantees safe Client-Host
 // interoperability. Mismatches are rejected before domain commands are admitted.
 export const RUNTIME_HOST_COMPATIBILITY_EPOCH = 45 as const;
-// 45: Connection onboarding inputs require `baseUrl` and results can carry the
-// `base_url_not_configured` rejection. Older peers reject both shapes.
+// 45: Connection onboarding inputs require `baseUrl` and `connectionId`, and
+// results can carry the `base_url_not_configured` / `connection_not_found`
+// rejections. Older peers reject all of these shapes.
 // 44: Session continuity and inspection stop carrying the retired Session
 // last-used timestamp. Older peers reject those strict projection shapes.
 // 43: Session tool-start events correlate hidden shell polls with `shellRunRef`.

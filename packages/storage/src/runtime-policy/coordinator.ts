@@ -931,10 +931,23 @@ export class RuntimePolicyCoordinator {
   ): Promise<CommitConnectionOnboardingResult> {
     return this.inLane(async (root) => {
       const catalog = await this.catalog.read(root);
-      const slug = deriveConnectionSlug(input.providerType);
-      const existing = catalog.connections.find((connection) => connection.slug === slug);
-      if (existing && existing.providerType !== input.providerType) {
-        return deepFreeze({ kind: 'slug_conflict' as const });
+      let existing: (typeof catalog.connections)[number] | undefined;
+      if (input.connectionId) {
+        // Explicit target: edit that connection wherever its slug lives. It
+        // was resolved from a live snapshot, but this lane is the authority —
+        // a concurrent delete or provider change surfaces here.
+        existing = catalog.connections.find(
+          (connection) => connection.connectionId === input.connectionId,
+        );
+        if (!existing || existing.providerType !== input.providerType) {
+          return deepFreeze({ kind: 'target_missing' as const });
+        }
+      } else {
+        const slug = deriveConnectionSlug(input.providerType);
+        existing = catalog.connections.find((connection) => connection.slug === slug);
+        if (existing && existing.providerType !== input.providerType) {
+          return deepFreeze({ kind: 'slug_conflict' as const });
+        }
       }
       const connectionId = existing?.connectionId ?? randomUUID();
       let invalidateLastTest = false;

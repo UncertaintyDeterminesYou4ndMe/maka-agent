@@ -41,12 +41,18 @@ export function createRuntimeHostOnboardingSurface(
       try {
         const result = await connection.request('connection.onboarding.verify', {
           providerType: input.providerType,
+          connectionId: input.connectionId ?? null,
           apiKey: trimmedOrNull(input.apiKey),
           baseUrl: trimmedOrNull(input.baseUrl),
         });
-        return result.kind === 'verified'
-          ? { kind: 'ok', models: [...result.models] }
-          : { kind: 'error', text: onboardingFailureText(result) };
+        if (result.kind === 'verified') return { kind: 'ok', models: [...result.models] };
+        return {
+          kind: 'error',
+          text: onboardingFailureText(result),
+          ...(result.kind === 'rejected' && result.reason === 'connection_not_found'
+            ? { stale: true }
+            : {}),
+        };
       } catch (error) {
         return { kind: 'error', text: errorText(error) };
       }
@@ -55,6 +61,7 @@ export function createRuntimeHostOnboardingSurface(
       try {
         const result = await connection.request('connection.onboarding.save', {
           providerType: input.providerType,
+          connectionId: input.connectionId ?? null,
           apiKey: trimmedOrNull(input.apiKey),
           baseUrl: trimmedOrNull(input.baseUrl),
           enabledModelIds: [...input.enabledModelIds],
@@ -103,14 +110,29 @@ export function projectRuntimeHostModelChoices(catalog: ConnectionCatalogSnapsho
   return choices;
 }
 
-function projectProviders(catalog: ConnectionCatalogSnapshot): OnboardingProviderEntry[] {
+export function projectProviders(catalog: ConnectionCatalogSnapshot): OnboardingProviderEntry[] {
   const bySlug = new Map(catalog.connections.map((connection) => [connection.slug, connection]));
   return listApiKeyOnboardableProviders().map((provider) => {
-    const candidate = bySlug.get(deriveConnectionSlug(provider.providerType));
-    const existing = candidate?.providerType === provider.providerType ? candidate : undefined;
+    // Prefer the canonical-slug connection; failing that, a provider's sole
+    // connection is unambiguously "the" one to edit — a Desktop-created relay
+    // under a custom slug must read as configured here, or saving would
+    // duplicate it at the canonical slug. With several non-canonical
+    // connections there is no honest single answer, so the wizard offers a
+    // fresh canonical-slug setup.
+    const canonical = bySlug.get(deriveConnectionSlug(provider.providerType));
+    const ofType = catalog.connections.filter(
+      (connection) => connection.providerType === provider.providerType,
+    );
+    const existing =
+      canonical?.providerType === provider.providerType
+        ? canonical
+        : ofType.length === 1
+          ? ofType[0]
+          : undefined;
     return {
       ...provider,
       hasConnection: existing !== undefined,
+      ...(existing ? { connectionId: existing.connectionId } : {}),
       enabledModelIds: existing ? [...existing.enabledModelIds] : [],
     };
   });
@@ -132,6 +154,8 @@ function onboardingFailureText(input: {
       return 'API key is required';
     case 'base_url_not_configured':
       return 'A base URL is required for this provider';
+    case 'connection_not_found':
+      return 'The existing connection is gone — reopen /setup and try again';
     case 'provider_unsupported':
       return 'This provider does not support API-key onboarding';
     case 'slug_conflict':

@@ -186,8 +186,10 @@ export class HostConnectionEffectCoordinator {
   #verifyOnboarding(
     input: ConnectionOnboardingVerifyInput,
   ): Promise<OperationOutcome<'connection.onboarding.verify'>> {
-    const slug = deriveConnectionSlug(input.providerType);
-    return this.#admit(slug, 'connection.onboarding.verify', async () => {
+    // Same lane a models.fetch on the targeted connection would use; the
+    // derived slug only keys the create-at-canonical-slug flow.
+    const lane = input.connectionId ?? deriveConnectionSlug(input.providerType);
+    return this.#admit(lane, 'connection.onboarding.verify', async () => {
       const prepared = await this.#discoverOnboarding(input);
       return prepared.kind === 'ready' ? { kind: 'verified', models: prepared.models } : prepared;
     });
@@ -196,8 +198,8 @@ export class HostConnectionEffectCoordinator {
   #saveOnboarding(
     input: ConnectionOnboardingSaveInput,
   ): Promise<OperationOutcome<'connection.onboarding.save'>> {
-    const slug = deriveConnectionSlug(input.providerType);
-    return this.#admit(slug, 'connection.onboarding.save', async () => {
+    const lane = input.connectionId ?? deriveConnectionSlug(input.providerType);
+    return this.#admit(lane, 'connection.onboarding.save', async () => {
       const prepared = await this.#discoverOnboarding(input);
       if (prepared.kind !== 'ready') return prepared;
       const available = new Set(prepared.models.map(({ id }) => id));
@@ -212,11 +214,23 @@ export class HostConnectionEffectCoordinator {
     if (!providerAuthSupportsApiKey(input.providerType)) {
       return { kind: 'rejected', reason: 'provider_unsupported' };
     }
-    const slug = deriveConnectionSlug(input.providerType);
     const catalog = await this.#stores.connectionCatalog.getSnapshot();
-    const candidate = catalog.connections.find((connection) => connection.slug === slug);
-    if (candidate && candidate.providerType !== input.providerType) {
-      return { kind: 'rejected', reason: 'slug_conflict' };
+    let candidate: (typeof catalog.connections)[number] | undefined;
+    if (input.connectionId) {
+      // Identity supplied by the client: edit that connection in place —
+      // whatever slug it lives under — instead of deriving a second one.
+      candidate = catalog.connections.find(
+        (connection) => connection.connectionId === input.connectionId,
+      );
+      if (!candidate || candidate.providerType !== input.providerType) {
+        return { kind: 'rejected', reason: 'connection_not_found' };
+      }
+    } else {
+      const slug = deriveConnectionSlug(input.providerType);
+      candidate = catalog.connections.find((connection) => connection.slug === slug);
+      if (candidate && candidate.providerType !== input.providerType) {
+        return { kind: 'rejected', reason: 'slug_conflict' };
+      }
     }
     const supplied = input.apiKey?.trim() ?? '';
     const stored = candidate
@@ -270,6 +284,7 @@ export class HostConnectionEffectCoordinator {
     try {
       const committed = await this.#stores.operations.commitConnectionOnboarding({
         providerType: input.providerType,
+        connectionId: input.connectionId,
         suppliedSecret: prepared.suppliedSecret || null,
         baseUrl: input.baseUrl,
         enabledModelIds: input.enabledModelIds,
@@ -281,6 +296,9 @@ export class HostConnectionEffectCoordinator {
       });
       if (committed.kind === 'slug_conflict') {
         return { kind: 'rejected', reason: 'slug_conflict' };
+      }
+      if (committed.kind === 'target_missing') {
+        return { kind: 'rejected', reason: 'connection_not_found' };
       }
       if (committed.changed) this.#onCommittedMutation();
       return { kind: 'saved' };
@@ -448,6 +466,7 @@ type OnboardingDiscovery =
       readonly kind: 'rejected';
       readonly reason:
         | 'provider_unsupported'
+        | 'connection_not_found'
         | 'credential_not_configured'
         | 'base_url_not_configured'
         | 'slug_conflict';

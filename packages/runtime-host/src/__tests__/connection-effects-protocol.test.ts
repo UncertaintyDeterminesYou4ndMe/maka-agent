@@ -31,11 +31,13 @@ describe('Runtime Host connection effects protocol', () => {
   test('bounds transient onboarding secrets, models, and save selections', () => {
     const verify = request('connection.onboarding.verify', {
       providerType: 'openrouter',
+      connectionId: null,
       apiKey: 'transient-secret',
       baseUrl: null,
     });
     const save = request('connection.onboarding.save', {
       providerType: 'openai-compatible',
+      connectionId: '00000000-0000-4000-8000-000000000002',
       apiKey: 'transient-secret',
       baseUrl: 'https://relay.example.test/v1',
       enabledModelIds: ['relay/model'],
@@ -60,6 +62,7 @@ describe('Runtime Host connection effects protocol', () => {
     );
     assertInvalidRequest('connection.onboarding.save', {
       providerType: 'openrouter',
+      connectionId: null,
       apiKey: null,
       baseUrl: null,
       enabledModelIds: [],
@@ -68,13 +71,21 @@ describe('Runtime Host connection effects protocol', () => {
     // non-http(s) or credentialed URL never reaches discovery.
     assertInvalidRequest('connection.onboarding.verify', {
       providerType: 'openai-compatible',
+      connectionId: null,
       apiKey: 'transient-secret',
       baseUrl: 'ftp://relay.example.test/v1',
     });
     assertInvalidRequest('connection.onboarding.verify', {
       providerType: 'openai-compatible',
+      connectionId: null,
       apiKey: 'transient-secret',
       baseUrl: 'https://user:pass@relay.example.test/v1',
+    });
+    assertInvalidRequest('connection.onboarding.verify', {
+      providerType: 'openai-compatible',
+      connectionId: 42,
+      apiKey: 'transient-secret',
+      baseUrl: null,
     });
     assertInvalidResponse('connection.onboarding.verify', {
       kind: 'verified',

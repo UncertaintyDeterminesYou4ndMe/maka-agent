@@ -215,6 +215,11 @@ export type ConnectionEffectCompletionResult =
 
 export interface CommitConnectionOnboardingInput {
   readonly providerType: ConnectionCatalogEntry['providerType'];
+  /**
+   * The existing connection to edit in place (any slug); null targets the
+   * canonical-slug connection, creating it when absent.
+   */
+  readonly connectionId: string | null;
   readonly suppliedSecret: string | null;
   /** Endpoint override; null keeps the existing entry's persisted URL or the registry default. */
   readonly baseUrl: string | null;
@@ -228,7 +233,10 @@ export type CommitConnectionOnboardingResult =
       readonly snapshot: ConnectionCatalogSnapshot;
       readonly changed: boolean;
     }
-  | { readonly kind: 'slug_conflict' };
+  | { readonly kind: 'slug_conflict' }
+  // The explicitly targeted connection no longer exists (or changed provider
+  // type) between the caller's snapshot and this commit.
+  | { readonly kind: 'target_missing' };
 
 export type ResolveExecutionConnectionResult =
   | { readonly kind: 'not_found' }

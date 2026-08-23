@@ -62,7 +62,7 @@ test('verifies a first-run API key without persisting a connection or credential
     });
 
     const result = await coordinator.handlers['connection.onboarding.verify'](
-      { providerType: 'openai', apiKey: 'first-run-secret', baseUrl: null },
+      { providerType: 'openai', connectionId: null, apiKey: 'first-run-secret', baseUrl: null },
       context,
     );
 
@@ -95,7 +95,12 @@ test('onboards a custom relay end to end: rejects a missing endpoint, discovers 
     // can answer discovery, so the attempt is rejected before any probe.
     assert.deepEqual(
       await coordinator.handlers['connection.onboarding.verify'](
-        { providerType: 'openai-compatible', apiKey: 'relay-secret', baseUrl: null },
+        {
+          providerType: 'openai-compatible',
+          connectionId: null,
+          apiKey: 'relay-secret',
+          baseUrl: null,
+        },
         context,
       ),
       { ok: true, result: { kind: 'rejected', reason: 'base_url_not_configured' } },
@@ -106,6 +111,7 @@ test('onboards a custom relay end to end: rejects a missing endpoint, discovers 
       {
         providerType: 'openai-compatible',
         apiKey: 'relay-secret',
+        connectionId: null,
         baseUrl: 'https://relay.example.test/v1',
         enabledModelIds: ['relay/model'],
       },
@@ -121,10 +127,100 @@ test('onboards a custom relay end to end: rejects a missing endpoint, discovers 
     // Re-verifying with a blank endpoint now reuses the persisted one.
     assert.deepEqual(
       await coordinator.handlers['connection.onboarding.verify'](
-        { providerType: 'openai-compatible', apiKey: '', baseUrl: null },
+        { providerType: 'openai-compatible', connectionId: null, apiKey: '', baseUrl: null },
         context,
       ),
       { ok: true, result: { kind: 'verified', models: [{ id: 'relay/model' }] } },
+    );
+  });
+});
+
+test('re-onboarding by connection identity edits a Desktop custom-slug relay in place', async () => {
+  await withFixture(async ({ stores }) => {
+    // Desktop can create a relay under any slug; the wizard resolves that
+    // connection's identity and must edit it, not derive a second connection
+    // at the canonical slug (#3467 review).
+    const connection = await createConnection(stores, 0, {
+      ...connectionDraft('my-relay', 'openai-compatible'),
+      baseUrl: 'https://relay-a.example.test/v1',
+      enabledModelIds: ['relay/model'],
+    });
+    await setConnectionCredential(stores, connection, 'old-secret');
+    let observedBaseUrl: string | undefined;
+    let observedSecret: string | undefined;
+    const coordinator = new HostConnectionEffectCoordinator({
+      stores,
+      activation: new RuntimePolicyActivationGate(),
+      oauthCredentials: new HostOAuthExecutionAuthority(stores),
+      now: () => 123,
+      createTransport: () => recordingTransport(() => undefined),
+      runModelDiscovery: async (target, secret) => {
+        observedBaseUrl = target.baseUrl;
+        observedSecret = secret;
+        return { ok: true, models: [{ id: 'relay/model' }] };
+      },
+    });
+
+    // A blank re-verify against the resolved identity reuses the stored
+    // secret and the persisted custom-slug endpoint.
+    assert.deepEqual(
+      await coordinator.handlers['connection.onboarding.verify'](
+        {
+          providerType: 'openai-compatible',
+          connectionId: connection.connectionId,
+          apiKey: '',
+          baseUrl: null,
+        },
+        context,
+      ),
+      { ok: true, result: { kind: 'verified', models: [{ id: 'relay/model' }] } },
+    );
+    assert.equal(observedBaseUrl, 'https://relay-a.example.test/v1');
+    assert.equal(observedSecret, 'old-secret');
+
+    assert.deepEqual(
+      await coordinator.handlers['connection.onboarding.save'](
+        {
+          providerType: 'openai-compatible',
+          connectionId: connection.connectionId,
+          apiKey: 'new-secret',
+          baseUrl: 'https://relay-b.example.test/v1',
+          enabledModelIds: ['relay/model'],
+        },
+        context,
+      ),
+      { ok: true, result: { kind: 'saved' } },
+    );
+    const catalog = await stores.connectionCatalog.getSnapshot();
+    // Edited in place: still exactly one connection, same identity, custom
+    // slug preserved, endpoint replaced.
+    assert.deepEqual(
+      catalog.connections.map(({ connectionId, slug, baseUrl }) => ({
+        connectionId,
+        slug,
+        baseUrl,
+      })),
+      [
+        {
+          connectionId: connection.connectionId,
+          slug: 'my-relay',
+          baseUrl: 'https://relay-b.example.test/v1',
+        },
+      ],
+    );
+
+    // A stale identity is rejected instead of silently creating a duplicate.
+    assert.deepEqual(
+      await coordinator.handlers['connection.onboarding.verify'](
+        {
+          providerType: 'openai-compatible',
+          connectionId: '00000000-0000-4000-8000-00000000dead',
+          apiKey: 'x',
+          baseUrl: null,
+        },
+        context,
+      ),
+      { ok: true, result: { kind: 'rejected', reason: 'connection_not_found' } },
     );
   });
 });
@@ -147,6 +243,7 @@ test('saves a verified first-run target through the canonical Host authorities',
       {
         providerType: 'openai',
         apiKey: 'first-run-secret',
+        connectionId: null,
         baseUrl: null,
         enabledModelIds: ['second-model'],
       },
@@ -208,6 +305,7 @@ test('re-enables an existing connection without replacing another default target
       {
         providerType: 'openai',
         apiKey: null,
+        connectionId: null,
         baseUrl: null,
         enabledModelIds: ['restored-model'],
       },
@@ -246,6 +344,7 @@ test('leaves canonical onboarding state unchanged when the durable intent cannot
           {
             providerType: 'openai',
             apiKey: 'new-secret',
+            connectionId: null,
             baseUrl: null,
             enabledModelIds: ['new-model'],
           },
@@ -295,6 +394,7 @@ test('recovers a durable onboarding intent instead of rolling back a partial pub
           {
             providerType: 'openai',
             apiKey: 'new-secret',
+            connectionId: null,
             baseUrl: null,
             enabledModelIds: ['new-model'],
           },
@@ -342,6 +442,7 @@ test('invalidates a verified result when onboarding rotates only the credential'
         {
           providerType: 'openai',
           apiKey: 'new-secret',
+          connectionId: null,
           baseUrl: null,
           enabledModelIds: ['gpt-5'],
         },
@@ -386,6 +487,7 @@ test('onboarding keeps what its wizard never offered and prunes what it did', as
         {
           providerType: 'openai-compatible',
           apiKey: 'new-secret',
+          connectionId: null,
           baseUrl: null,
           enabledModelIds: ['kept-model'],
         },
@@ -418,6 +520,7 @@ test('onboarding keeps what its wizard never offered and prunes what it did', as
         {
           providerType: 'openai-compatible',
           apiKey: '',
+          connectionId: null,
           baseUrl: 'https://relay-b.example.test/v1',
           enabledModelIds: ['kept-model'],
         },
@@ -465,6 +568,7 @@ test('onboarding drops a declaration for a model the wizard offered and the user
         {
           providerType: 'openai-compatible',
           apiKey: 'new-secret',
+          connectionId: null,
           baseUrl: null,
           enabledModelIds: ['kept-model'],
         },
@@ -510,6 +614,7 @@ test('rejects an oversized final catalog before publishing a recovery intent', a
         {
           providerType: 'openai',
           apiKey: 'capacity-secret',
+          connectionId: null,
           baseUrl: null,
           enabledModelIds: [discovered[0]!.id],
         },

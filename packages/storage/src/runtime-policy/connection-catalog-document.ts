@@ -525,8 +525,18 @@ export class ConnectionCatalogDocumentOwner {
     const connectionId = decodeConnectionInput(() => decodeRuntimePolicyEntityId(rawConnectionId));
     const providerType = decodeConnectionInput(() => decodeProviderType(rawProviderType));
     const definition = PROVIDER_DEFAULTS[providerType];
-    const slug = deriveConnectionSlug(providerType);
-    const index = current.connections.findIndex((connection) => connection.slug === slug);
+    // Identity first: the intent's connectionId names the connection being
+    // edited, whatever slug it lives under — a relay created in Desktop under
+    // a custom slug is updated in place, never duplicated at the canonical
+    // slug. Only a genuinely new connection lands at the derived slug.
+    let index = current.connections.findIndex(
+      (connection) => connection.connectionId === connectionId,
+    );
+    if (index < 0) {
+      index = current.connections.findIndex(
+        (connection) => connection.slug === deriveConnectionSlug(providerType),
+      );
+    }
     const previous = current.connections[index];
     if (previous && previous.providerType !== providerType) {
       return { kind: 'slug_conflict' };
@@ -534,6 +544,7 @@ export class ConnectionCatalogDocumentOwner {
     if (previous && previous.connectionId !== connectionId) {
       throw codecError('invalid_document', 'Onboarding intent conflicts with the connection id');
     }
+    const slug = previous?.slug ?? deriveConnectionSlug(providerType);
     if (!previous && current.connections.length >= CONNECTION_CATALOG_MAX_CONNECTIONS) {
       throw codecError(
         'invalid_connection_input',

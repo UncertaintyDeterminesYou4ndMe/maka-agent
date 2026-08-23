@@ -851,8 +851,10 @@ export type OnboardingWizardStatus =
 
 export interface OnboardingWizardInput {
   providers: readonly OnboardingProviderEntry[];
-  /** search→key: the user picked a provider. The runner records it for verify/save. */
-  onPickProvider: (providerType: ProviderType) => void;
+  /** search→key: the user picked a provider. The runner records it — and the
+   *   existing connection's identity, when the catalog resolved one — for
+   *   verify/save, so saving edits that connection in place. */
+  onPickProvider: (providerType: ProviderType, existingConnectionId: string | undefined) => void;
   /** baseUrl submit (only for `requiresBaseUrl` providers). Empty means "reuse
    *   the existing connection's persisted endpoint"; the wizard has already
    *   rejected an empty value for a provider with no connection. */
@@ -963,7 +965,7 @@ export class OnboardingWizard implements Component {
     this.modelHighlight = 0;
     this.modelScroll = 0;
     this.modelsSearchEditor.setText('');
-    this.input.onPickProvider(provider.providerType);
+    this.input.onPickProvider(provider.providerType, provider.connectionId);
   }
 
   private submitBaseUrl(value: string): void {

@@ -86,6 +86,14 @@ export interface ConnectionTestRunInput {
 
 export interface ConnectionOnboardingVerifyInput {
   readonly providerType: ProviderType;
+  /**
+   * The existing connection this onboarding edits, when the client resolved
+   * one — connection identity stays authoritative instead of being re-derived
+   * from the provider type, so a relay created under a custom slug is updated
+   * in place rather than duplicated at the canonical slug. `null` targets the
+   * canonical-slug connection, creating it if absent.
+   */
+  readonly connectionId: string | null;
   readonly apiKey: string | null;
   /**
    * Endpoint override for providers whose registry entry carries none (the
@@ -105,6 +113,7 @@ export type ConnectionOnboardingVerifyResult =
       readonly kind: 'rejected';
       readonly reason:
         | 'provider_unsupported'
+        | 'connection_not_found'
         | 'credential_not_configured'
         | 'base_url_not_configured'
         | 'slug_conflict';
@@ -117,6 +126,7 @@ export type ConnectionOnboardingSaveResult =
       readonly kind: 'rejected';
       readonly reason:
         | 'provider_unsupported'
+        | 'connection_not_found'
         | 'credential_not_configured'
         | 'base_url_not_configured'
         | 'slug_conflict'
@@ -228,12 +238,14 @@ export const CONNECTION_EFFECT_OPERATION_SPECS = {
 export function decodeConnectionOnboardingSaveInput(value: unknown): ConnectionOnboardingSaveInput {
   const input = requireExactRecord(value, 'connection onboarding save input', [
     'providerType',
+    'connectionId',
     'apiKey',
     'baseUrl',
     'enabledModelIds',
   ]);
   const verified = decodeConnectionOnboardingVerifyInput({
     providerType: input.providerType,
+    connectionId: input.connectionId,
     apiKey: input.apiKey,
     baseUrl: input.baseUrl,
   });
@@ -275,6 +287,7 @@ export function decodeConnectionOnboardingSaveResult(
   if (
     rejected.kind !== 'rejected' ||
     (rejected.reason !== 'provider_unsupported' &&
+      rejected.reason !== 'connection_not_found' &&
       rejected.reason !== 'credential_not_configured' &&
       rejected.reason !== 'base_url_not_configured' &&
       rejected.reason !== 'slug_conflict' &&
@@ -290,12 +303,15 @@ export function decodeConnectionOnboardingVerifyInput(
 ): ConnectionOnboardingVerifyInput {
   const input = requireExactRecord(value, 'connection onboarding verification input', [
     'providerType',
+    'connectionId',
     'apiKey',
     'baseUrl',
   ]);
   const providerType = decodeDomain(() => decodeProviderType(input.providerType));
   return {
     providerType,
+    connectionId:
+      input.connectionId === null ? null : requireEntityId(input.connectionId, 'connectionId'),
     apiKey:
       input.apiKey === null
         ? null
@@ -343,6 +359,7 @@ export function decodeConnectionOnboardingVerifyResult(
   if (
     rejected.kind !== 'rejected' ||
     (rejected.reason !== 'provider_unsupported' &&
+      rejected.reason !== 'connection_not_found' &&
       rejected.reason !== 'credential_not_configured' &&
       rejected.reason !== 'base_url_not_configured' &&
       rejected.reason !== 'slug_conflict')
