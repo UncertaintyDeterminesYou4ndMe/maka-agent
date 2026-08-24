@@ -50,6 +50,7 @@ import {
   type BeginConnectionTestResult,
   type BeginModelFetchResult,
   type ConnectionEffectCompletionResult,
+  type ConnectionOnboardingTicket,
   type RuntimePolicyStoresWriter,
 } from '@maka/storage/runtime-policy-stores';
 import type {
@@ -214,33 +215,26 @@ export class HostConnectionEffectCoordinator {
     if (!providerAuthSupportsApiKey(input.providerType)) {
       return { kind: 'rejected', reason: 'provider_unsupported' };
     }
-    const catalog = await this.#stores.connectionCatalog.getSnapshot();
-    let candidate: (typeof catalog.connections)[number] | undefined;
-    if (input.connectionId) {
-      // Identity supplied by the client: edit that connection in place —
-      // whatever slug it lives under — instead of deriving a second one.
-      candidate = catalog.connections.find(
-        (connection) => connection.connectionId === input.connectionId,
-      );
-      if (!candidate || candidate.providerType !== input.providerType) {
-        return { kind: 'rejected', reason: 'connection_not_found' };
-      }
-    } else {
-      const slug = deriveConnectionSlug(input.providerType);
-      candidate = catalog.connections.find((connection) => connection.slug === slug);
-      if (candidate && candidate.providerType !== input.providerType) {
-        return { kind: 'rejected', reason: 'slug_conflict' };
-      }
+    // The begin/complete ticket pair binds this discovery to the connection
+    // revision, credential, and proxy it observed: a concurrent policy update
+    // between the remote probe and the commit supersedes the save instead of
+    // pairing the new endpoint with an inventory it never produced. Verify
+    // simply abandons its ticket (they are WeakMap-held one-shots).
+    const begun = await this.#stores.operations.beginConnectionOnboarding({
+      providerType: input.providerType,
+      connectionId: input.connectionId,
+    });
+    if (begun.kind === 'target_missing') {
+      // Identity supplied by the client names a connection that is gone or
+      // changed provider type: reject instead of deriving a duplicate.
+      return { kind: 'rejected', reason: 'connection_not_found' };
     }
+    if (begun.kind === 'slug_conflict') {
+      return { kind: 'rejected', reason: 'slug_conflict' };
+    }
+    const candidate = begun.connection ?? undefined;
     const supplied = input.apiKey?.trim() ?? '';
-    const stored = candidate
-      ? await this.#stores.operations.exportCredentialMaterial({
-          scope: 'connection',
-          connectionId: candidate.connectionId,
-          kind: 'api_key',
-        })
-      : null;
-    const secret = supplied || stored?.secret || '';
+    const secret = supplied || begun.storedSecret || '';
     if (PROVIDER_DEFAULTS[input.providerType].authKind === 'api_key' && secret.length === 0) {
       return { kind: 'rejected', reason: 'credential_not_configured' };
     }
@@ -254,10 +248,12 @@ export class HostConnectionEffectCoordinator {
     if (!base.baseUrl && !PROVIDER_DEFAULTS[input.providerType].baseUrl) {
       return { kind: 'rejected', reason: 'base_url_not_configured' };
     }
-    const proxy = await this.#stores.operations.resolveNetworkProxyExecution();
-    if (proxy.kind !== 'ready') return { kind: 'failed', errorClass: 'network' };
+    // The ticket's basis certifies this exact proxy, so discovery must use
+    // the pinned value rather than re-resolving it (a flip-and-restore
+    // between the two reads would otherwise slip past the basis check).
+    if (begun.proxyCredentialMissing) return { kind: 'failed', errorClass: 'network' };
     const transport = this.#createTransport(
-      toRuntimePolicyProxy(proxy.networkProxy, proxy.secretMaterial.networkProxy?.secret),
+      toRuntimePolicyProxy(begun.networkProxy, begun.proxySecret ?? undefined),
     );
     try {
       const effect = await this.#runModelDiscovery(base, secret, { fetch: transport.fetch });
@@ -269,6 +265,7 @@ export class HostConnectionEffectCoordinator {
       }
       return {
         kind: 'ready',
+        ticket: begun.ticket,
         suppliedSecret: supplied,
         models: effect.models,
       };
@@ -282,23 +279,29 @@ export class HostConnectionEffectCoordinator {
     prepared: Extract<OnboardingDiscovery, { readonly kind: 'ready' }>,
   ): Promise<ConnectionOnboardingSaveResult> {
     try {
-      const committed = await this.#stores.operations.commitConnectionOnboarding({
-        providerType: input.providerType,
-        connectionId: input.connectionId,
-        suppliedSecret: prepared.suppliedSecret || null,
-        baseUrl: input.baseUrl,
-        enabledModelIds: input.enabledModelIds,
-        discovery: {
-          models: prepared.models,
-          source: 'fetched',
-          fetchedAt: this.#now(),
+      const committed = await this.#stores.operations.completeConnectionOnboarding(
+        prepared.ticket,
+        {
+          providerType: input.providerType,
+          connectionId: input.connectionId,
+          suppliedSecret: prepared.suppliedSecret || null,
+          baseUrl: input.baseUrl,
+          enabledModelIds: input.enabledModelIds,
+          discovery: {
+            models: prepared.models,
+            source: 'fetched',
+            fetchedAt: this.#now(),
+          },
         },
-      });
+      );
       if (committed.kind === 'slug_conflict') {
         return { kind: 'rejected', reason: 'slug_conflict' };
       }
       if (committed.kind === 'target_missing') {
         return { kind: 'rejected', reason: 'connection_not_found' };
+      }
+      if (committed.kind === 'superseded') {
+        return { kind: 'rejected', reason: 'superseded' };
       }
       if (committed.changed) this.#onCommittedMutation();
       return { kind: 'saved' };
@@ -459,6 +462,7 @@ type BeginConnectionTestReady = Extract<BeginConnectionTestResult, { readonly ki
 type OnboardingDiscovery =
   | {
       readonly kind: 'ready';
+      readonly ticket: ConnectionOnboardingTicket;
       readonly suppliedSecret: string;
       readonly models: ConnectionModelDiscoveryResult['models'];
     }

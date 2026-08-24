@@ -130,7 +130,10 @@ export type ConnectionOnboardingSaveResult =
         | 'credential_not_configured'
         | 'base_url_not_configured'
         | 'slug_conflict'
-        | 'model_unavailable';
+        | 'model_unavailable'
+        // The connection changed between model discovery and the commit; the
+        // discovered inventory no longer describes it. Re-run the wizard.
+        | 'superseded';
     }
   | { readonly kind: 'failed'; readonly errorClass: ConnectionEffectFailureClass };
 
@@ -291,7 +294,8 @@ export function decodeConnectionOnboardingSaveResult(
       rejected.reason !== 'credential_not_configured' &&
       rejected.reason !== 'base_url_not_configured' &&
       rejected.reason !== 'slug_conflict' &&
-      rejected.reason !== 'model_unavailable')
+      rejected.reason !== 'model_unavailable' &&
+      rejected.reason !== 'superseded')
   ) {
     throw invalidProtocolFrame('Invalid connection onboarding save rejection');
   }

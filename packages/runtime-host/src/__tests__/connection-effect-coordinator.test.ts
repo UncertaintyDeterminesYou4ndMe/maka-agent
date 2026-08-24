@@ -225,6 +225,115 @@ test('re-onboarding by connection identity edits a Desktop custom-slug relay in 
   });
 });
 
+test('a save whose connection changed between discovery and commit is superseded, never mixed', async () => {
+  await withFixture(async ({ stores }) => {
+    // The #3467 review race: discovery observes relay A/key A, a supported
+    // concurrent policy update moves the connection to relay B/key B before
+    // the commit, and the save must NOT persist relay B with the model
+    // inventory relay A produced.
+    const connection = await createConnection(stores, 0, {
+      ...connectionDraft('openai-compatible', 'openai-compatible'),
+      baseUrl: 'https://relay-a.example.test/v1',
+      enabledModelIds: ['relay/original'],
+    });
+    await setConnectionCredential(stores, connection, 'key-a');
+
+    let releaseDiscovery!: () => void;
+    const discoveryPaused = new Promise<void>((resolve) => {
+      releaseDiscovery = resolve;
+    });
+    let observeDiscovery!: (value: { baseUrl?: string; secret: string }) => void;
+    const discoveryObserved = new Promise<{ baseUrl?: string; secret: string }>((resolve) => {
+      observeDiscovery = resolve;
+    });
+    const coordinator = new HostConnectionEffectCoordinator({
+      stores,
+      activation: new RuntimePolicyActivationGate(),
+      oauthCredentials: new HostOAuthExecutionAuthority(stores),
+      now: () => 999,
+      createTransport: () => recordingTransport(() => undefined),
+      runModelDiscovery: async (target, secret) => {
+        observeDiscovery({ baseUrl: target.baseUrl, secret });
+        await discoveryPaused;
+        return { ok: true, models: [{ id: 'model-from-relay-a' }] };
+      },
+    });
+
+    const saving = coordinator.handlers['connection.onboarding.save'](
+      {
+        providerType: 'openai-compatible',
+        connectionId: connection.connectionId,
+        apiKey: '',
+        baseUrl: null,
+        enabledModelIds: ['model-from-relay-a'],
+      },
+      context,
+    );
+    const observed = await discoveryObserved;
+    assert.equal(observed.baseUrl, 'https://relay-a.example.test/v1');
+    assert.equal(observed.secret, 'key-a');
+
+    // Concurrent, fully supported policy update while discovery is in flight:
+    // move the endpoint and rotate the credential.
+    const moved = await stores.connectionCatalog.update({
+      expected: { connectionId: connection.connectionId, revision: connection.revision },
+      changes: {
+        name: connection.name,
+        baseUrl: 'https://relay-b.example.test/v1',
+        enabled: true,
+        enabledModelIds: connection.enabledModelIds,
+      },
+    });
+    assert.equal(moved.kind, 'committed');
+    const keyA = await connectionCredentialStatus(stores, connection);
+    assert.equal(keyA.configured, true);
+    const rotated = await stores.credentialVault.set({
+      locator: connectionCredential(connection),
+      expected:
+        keyA.configured === true
+          ? { credentialId: keyA.credentialId, revision: keyA.revision }
+          : null,
+      secret: 'key-b',
+    });
+    assert.equal(rotated.kind, 'committed');
+
+    releaseDiscovery();
+    assert.deepEqual(await saving, {
+      ok: true,
+      result: { kind: 'rejected', reason: 'superseded' },
+    });
+
+    // Relay B and key B stand untouched; relay A's inventory never landed.
+    const after = (await stores.connectionCatalog.getSnapshot()).connections.find(
+      ({ connectionId }) => connectionId === connection.connectionId,
+    );
+    assert.equal(after?.baseUrl, 'https://relay-b.example.test/v1');
+    assert.equal(
+      after?.models.some(({ id }) => id === 'model-from-relay-a'),
+      false,
+    );
+    assert.deepEqual(after?.enabledModelIds, ['relay/original']);
+    assert.equal(
+      (await stores.operations.exportCredentialMaterial(connectionCredential(connection)))?.secret,
+      'key-b',
+    );
+
+    // A retry against the settled state discovers through relay B/key B and
+    // commits cleanly.
+    const retried = await coordinator.handlers['connection.onboarding.save'](
+      {
+        providerType: 'openai-compatible',
+        connectionId: connection.connectionId,
+        apiKey: '',
+        baseUrl: null,
+        enabledModelIds: ['model-from-relay-a'],
+      },
+      context,
+    );
+    assert.deepEqual(retried, { ok: true, result: { kind: 'saved' } });
+  });
+});
+
 test('saves a verified first-run target through the canonical Host authorities', async () => {
   await withFixture(async ({ stores }) => {
     const coordinator = new HostConnectionEffectCoordinator({

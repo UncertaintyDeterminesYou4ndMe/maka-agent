@@ -156,6 +156,8 @@ function onboardingFailureText(input: {
       return 'A base URL is required for this provider';
     case 'connection_not_found':
       return 'The existing connection is gone — reopen /setup and try again';
+    case 'superseded':
+      return 'The connection changed while onboarding — reopen /setup and try again';
     case 'provider_unsupported':
       return 'This provider does not support API-key onboarding';
     case 'slug_conflict':

@@ -60,6 +60,13 @@ describe('Runtime Host connection effects protocol', () => {
       decodeHostFrame(response('connection.onboarding.save', { kind: 'saved' })),
       response('connection.onboarding.save', { kind: 'saved' }),
     );
+    // A save whose discovery basis was concurrently changed is superseded.
+    assert.deepEqual(
+      decodeHostFrame(
+        response('connection.onboarding.save', { kind: 'rejected', reason: 'superseded' }),
+      ),
+      response('connection.onboarding.save', { kind: 'rejected', reason: 'superseded' }),
+    );
     assertInvalidRequest('connection.onboarding.save', {
       providerType: 'openrouter',
       connectionId: null,
