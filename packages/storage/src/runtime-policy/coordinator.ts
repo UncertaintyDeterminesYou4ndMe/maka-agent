@@ -196,6 +196,7 @@ interface ConnectionOnboardingBasis {
   readonly slug: string;
   readonly target: { readonly connectionId: string; readonly revision: number } | null;
   readonly credential: CredentialStatus | null;
+  readonly requestHeadersCredential: CredentialStatus | null;
   readonly effectiveProxy: EffectiveProxyConfigurationBasis;
   readonly proxyCredential: CredentialStatus | null;
 }
@@ -976,6 +977,8 @@ export class RuntimePolicyCoordinator {
       const vault = await this.vault.read(root);
       let credential: CredentialStatus | null = null;
       let storedSecret: string | null = null;
+      let requestHeadersCredential: CredentialStatus | null = null;
+      let requestHeadersSecret: string | null = null;
       if (existing) {
         const locator = connectionCredentialLocator(
           existing.connectionId,
@@ -985,6 +988,12 @@ export class RuntimePolicyCoordinator {
           credential = credentialStatus(vault, locator);
           storedSecret = findCredential(vault, locator)?.secret ?? null;
         }
+        // Discovery must probe with the same header customization the models
+        // path applies, so the secret is pinned for the probe and its status
+        // joins the basis the commit revalidates.
+        const headersLocator = connectionRequestHeadersLocator(existing.connectionId);
+        requestHeadersCredential = credentialStatus(vault, headersLocator);
+        requestHeadersSecret = findCredential(vault, headersLocator)?.secret ?? null;
       }
       // The proxy discovery will run through is pinned HERE, like
       // beginModelFetch pins it — re-resolving it later would let an A→B→A
@@ -1007,6 +1016,7 @@ export class RuntimePolicyCoordinator {
             ? { connectionId: existing.connectionId, revision: existing.revision }
             : null,
           credential,
+          requestHeadersCredential,
           effectiveProxy: effectiveProxyConfigurationBasis(networkProxy),
           proxyCredential,
         },
@@ -1017,6 +1027,7 @@ export class RuntimePolicyCoordinator {
         ticket: ticket as ConnectionOnboardingTicket,
         connection: existing ? structuredClone(existing) : null,
         storedSecret,
+        requestHeadersSecret,
         networkProxy,
         proxySecret,
         proxyCredentialMissing: proxyLocator !== null && proxySecret === null,
@@ -1065,6 +1076,8 @@ export class RuntimePolicyCoordinator {
     | { readonly kind: 'superseded'; readonly changed: ConnectionEffectChangedDomain[] }
   > {
     const changed: ConnectionEffectChangedDomain[] = [];
+    // One vault read serves every credential-status compare below.
+    const vault = await this.vault.read(root);
     if (basis.target) {
       const connection = findConnection(catalog, { connectionId: basis.target.connectionId });
       // A vanished target is its own answer — "the connection is gone" beats
@@ -1074,18 +1087,28 @@ export class RuntimePolicyCoordinator {
       if (!connection) return { kind: 'target_missing' };
       if (connection.revision !== basis.target.revision) {
         changed.push('connection');
-      } else if (basis.credential) {
-        const vault = await this.vault.read(root);
-        if (
-          !sameCredentialStatus(credentialStatus(vault, basis.credential.locator), basis.credential)
-        ) {
-          changed.push('credential');
-        }
+      } else if (
+        basis.credential &&
+        !sameCredentialStatus(credentialStatus(vault, basis.credential.locator), basis.credential)
+      ) {
+        changed.push('credential');
       }
     } else if (catalog.connections.some((connection) => connection.slug === basis.slug)) {
       // Discovery ran for a first-time creation; any connection that appeared
       // at the canonical slug since supersedes it.
       changed.push('connection');
+    }
+    if (
+      basis.requestHeadersCredential &&
+      // The probe went out with these custom headers; a rotation since means
+      // the inventory no longer describes what the connection would fetch.
+      !sameCredentialStatus(
+        credentialStatus(vault, basis.requestHeadersCredential.locator),
+        basis.requestHeadersCredential,
+      ) &&
+      !changed.includes('credential')
+    ) {
+      changed.push('credential');
     }
     const policy = await this.policy.read(root);
     if (
@@ -1096,17 +1119,15 @@ export class RuntimePolicyCoordinator {
     ) {
       changed.push('network_proxy');
     }
-    if (basis.proxyCredential) {
-      const vault = await this.vault.read(root);
-      if (
-        !sameCredentialStatus(
-          credentialStatus(vault, basis.proxyCredential.locator),
-          basis.proxyCredential,
-        ) &&
-        !changed.includes('credential')
-      ) {
-        changed.push('credential');
-      }
+    if (
+      basis.proxyCredential &&
+      !sameCredentialStatus(
+        credentialStatus(vault, basis.proxyCredential.locator),
+        basis.proxyCredential,
+      ) &&
+      !changed.includes('credential')
+    ) {
+      changed.push('credential');
     }
     return changed.length > 0 ? { kind: 'superseded', changed } : { kind: 'unchanged' };
   }

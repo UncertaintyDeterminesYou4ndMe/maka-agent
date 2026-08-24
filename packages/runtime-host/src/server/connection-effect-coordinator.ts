@@ -256,7 +256,17 @@ export class HostConnectionEffectCoordinator {
       toRuntimePolicyProxy(begun.networkProxy, begun.proxySecret ?? undefined),
     );
     try {
-      const effect = await this.#runModelDiscovery(base, secret, { fetch: transport.fetch });
+      // The probe must go out the way the models path sends it (#withTransport):
+      // with the connection's custom request headers and body overlay, both
+      // pinned by the ticket whose basis the commit revalidates.
+      const effect = await this.#runModelDiscovery(base, secret, {
+        fetch: createRequestCustomizationFetch(transport.fetch, {
+          headers: begun.requestHeadersSecret
+            ? parseRequestHeaders(begun.requestHeadersSecret)
+            : {},
+          bodyOverlay: base.requestBodyOverlay,
+        }),
+      });
       if (!effect.ok || effect.models.length === 0) {
         return {
           kind: 'failed',

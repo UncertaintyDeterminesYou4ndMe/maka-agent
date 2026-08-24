@@ -246,6 +246,11 @@ export type BeginConnectionOnboardingResult =
       /** The target's stored API key, for blank-key reuse during discovery. */
       readonly storedSecret: string | null;
       /**
+       * The target's custom request-headers secret, so the discovery probe
+       * carries the same header customization the models path applies.
+       */
+      readonly requestHeadersSecret: string | null;
+      /**
        * The proxy discovery must run through — pinned here, like
        * beginModelFetch pins it, so the basis certifies the egress the
        * inventory actually travelled.

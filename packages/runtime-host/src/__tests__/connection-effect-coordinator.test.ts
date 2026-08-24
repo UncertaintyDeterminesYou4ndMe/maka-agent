@@ -334,6 +334,129 @@ test('a save whose connection changed between discovery and commit is superseded
   });
 });
 
+test('onboarding probes with the custom request headers the models path sends, and a header rotation supersedes', async () => {
+  await withFixture(async ({ stores }) => {
+    // A connection that authenticates through a custom header (plus a body
+    // overlay) must onboard with the same probe the models path sends —
+    // otherwise re-onboarding fails against the very provider that
+    // models.fetch reaches fine (#3467 review).
+    const headerSecret = 'header-secret-must-not-escape';
+    const connection = await createConnection(stores, 0, {
+      ...connectionDraft('header-relay', 'openai-compatible'),
+      baseUrl: 'https://relay.example.test/v1',
+      enabledModelIds: ['relay/model'],
+      requestBodyOverlay: { tenant: 'acme' },
+    });
+    await setConnectionCredential(stores, connection, 'api-key');
+    const headersLocator = {
+      scope: 'connection' as const,
+      connectionId: connection.connectionId,
+      kind: 'request_headers' as const,
+    };
+    const headersSet = await stores.credentialVault.set({
+      locator: headersLocator,
+      expected: null,
+      secret: JSON.stringify({ 'X-Relay-Auth': headerSecret }),
+    });
+    assert.equal(headersSet.kind, 'committed');
+
+    const probes: Array<{ header: string | null; body: unknown }> = [];
+    let releaseDiscovery!: () => void;
+    const discoveryPaused = new Promise<void>((resolve) => {
+      releaseDiscovery = resolve;
+    });
+    let observeDiscovery!: () => void;
+    const discoveryObserved = new Promise<void>((resolve) => {
+      observeDiscovery = resolve;
+    });
+    let discoveryRuns = 0;
+    const coordinator = new HostConnectionEffectCoordinator({
+      stores,
+      activation: new RuntimePolicyActivationGate(),
+      oauthCredentials: new HostOAuthExecutionAuthority(stores),
+      now: () => 456,
+      createTransport: () => ({
+        fetch: (async (input, init) => {
+          const request = new Request(input, init);
+          probes.push({
+            header: request.headers.get('x-relay-auth'),
+            body: JSON.parse(await request.text()),
+          });
+          return new Response('{}', { status: 200 });
+        }) as typeof globalThis.fetch,
+        close: async () => {},
+      }),
+      runModelDiscovery: async (_target, _secret, options) => {
+        await options.fetch('https://relay.example.test/v1/models', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ probe: true }),
+        });
+        discoveryRuns += 1;
+        if (discoveryRuns === 2) {
+          observeDiscovery();
+          await discoveryPaused;
+        }
+        return { ok: true, models: [{ id: 'relay/model' }] };
+      },
+    });
+
+    const verified = await coordinator.handlers['connection.onboarding.verify'](
+      {
+        providerType: 'openai-compatible',
+        connectionId: connection.connectionId,
+        apiKey: '',
+        baseUrl: null,
+      },
+      context,
+    );
+    assert.equal(verified.ok, true);
+    assert.deepEqual(probes, [{ header: headerSecret, body: { probe: true, tenant: 'acme' } }]);
+    assertRedacted(verified, [headerSecret]);
+
+    // Rotating the header credential while a save's discovery is in flight
+    // invalidates its basis: the committed inventory must describe what the
+    // connection would fetch, and that changed under the probe.
+    const saving = coordinator.handlers['connection.onboarding.save'](
+      {
+        providerType: 'openai-compatible',
+        connectionId: connection.connectionId,
+        apiKey: '',
+        baseUrl: null,
+        enabledModelIds: ['relay/model'],
+      },
+      context,
+    );
+    await discoveryObserved;
+    const headerStatus = await stores.credentialVault.getStatus(headersLocator);
+    assert.equal(headerStatus.kind === 'status' && headerStatus.status.configured, true);
+    if (headerStatus.kind !== 'status' || !headerStatus.status.configured) return;
+    const rotated = await stores.credentialVault.set({
+      locator: headersLocator,
+      expected: {
+        credentialId: headerStatus.status.credentialId,
+        revision: headerStatus.status.revision,
+      },
+      secret: JSON.stringify({ 'X-Relay-Auth': 'rotated-header-secret' }),
+    });
+    assert.equal(rotated.kind, 'committed');
+    // The rotation left the catalog row untouched, so this supersede can only
+    // come from the header credential joining the discovery basis.
+    const row = (await stores.connectionCatalog.getSnapshot()).connections.find(
+      ({ connectionId }) => connectionId === connection.connectionId,
+    );
+    assert.equal(row?.revision, connection.revision);
+
+    releaseDiscovery();
+    assert.deepEqual(await saving, {
+      ok: true,
+      result: { kind: 'rejected', reason: 'superseded' },
+    });
+    // The save's own probe carried the same customization as the verify's.
+    assert.deepEqual(probes[1], probes[0]);
+  });
+});
+
 test('saves a verified first-run target through the canonical Host authorities', async () => {
   await withFixture(async ({ stores }) => {
     const coordinator = new HostConnectionEffectCoordinator({
